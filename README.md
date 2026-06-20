@@ -1,5 +1,7 @@
 # Ad Integrity Scanner
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
 > Send a URL → get a transparent, 0–100 **integrity score** for the ad environment that display and OLV/video ads would run in, backed by ~60 raw signals.
 
 A local-first service that accepts a URL, scans the ad environment, computes
