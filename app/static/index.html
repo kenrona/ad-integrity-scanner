@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ad Integrity Scanner — URL Submitter</title>
+<style>
+  :root { --bg:#0f1320; --card:#1a2032; --ink:#e7ecf5; --mut:#8a97b3; --acc:#5b8cff;
+          --ok:#3ecf8e; --warn:#e0b341; --err:#ff6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         background:var(--bg); color:var(--ink); }
+  .wrap { max-width:880px; margin:0 auto; padding:28px 20px 60px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:var(--mut); margin:0 0 22px; }
+  .card { background:var(--card); border:1px solid #283150; border-radius:12px;
+          padding:18px; margin-bottom:18px; }
+  label { display:block; color:var(--mut); font-size:12px; margin-bottom:6px; }
+  input[type=file], input[type=number], input[type=text] {
+    background:#0d1120; border:1px solid #2d3756; color:var(--ink);
+    border-radius:8px; padding:9px 11px; width:100%; }
+  .row { display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end; }
+  .row > div { flex:1; min-width:160px; }
+  button { background:var(--acc); color:#fff; border:0; border-radius:8px;
+           padding:10px 18px; font-weight:600; cursor:pointer; }
+  button.ghost { background:#2a3354; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .bar { height:10px; background:#0d1120; border-radius:6px; overflow:hidden; margin:14px 0 6px; }
+  .bar > i { display:block; height:100%; width:0; background:var(--acc); transition:width .2s; }
+  .counts { display:flex; gap:18px; flex-wrap:wrap; color:var(--mut); font-size:13px; }
+  .counts b { color:var(--ink); }
+  table { width:100%; border-collapse:collapse; margin-top:8px; font-size:13px; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid #232b46;
+           white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:520px; }
+  th { color:var(--mut); font-weight:600; }
+  .pill { padding:2px 9px; border-radius:20px; font-size:12px; font-weight:600; }
+  .s-queued { background:#22305a; color:#9db8ff; }
+  .s-fresh { background:#1d3b30; color:var(--ok); }
+  .s-inflight { background:#3a3320; color:var(--warn); }
+  .s-error { background:#3a2330; color:var(--err); }
+  .stats { display:flex; gap:22px; flex-wrap:wrap; }
+  .stat b { font-size:18px; }
+  .stat span { color:var(--mut); font-size:12px; display:block; }
+  .muted { color:var(--mut); font-size:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Ad Integrity Scanner</h1>
+  <p class="sub">Pick a file of URLs (one per line; <code>#</code> comments and blanks ignored). Each is POSTed to <code>/scan</code> one at a time.</p>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>URL file (.txt / .csv)</label>
+        <input type="file" id="file" accept=".txt,.csv,text/plain">
+      </div>
+      <div style="flex:0 0 150px">
+        <label>Delay between (ms)</label>
+        <input type="number" id="delay" value="0" min="0" step="50">
+      </div>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <div style="flex:0 0 auto">
+        <button id="go" disabled>Submit</button>
+        <button id="stop" class="ghost" disabled>Stop</button>
+      </div>
+      <div class="muted" id="loaded"></div>
+    </div>
+    <div class="bar"><i id="prog"></i></div>
+    <div class="counts">
+      <span>sent <b id="c-sent">0</b>/<b id="c-total">0</b></span>
+      <span>queued <b id="c-queued">0</b></span>
+      <span>fresh <b id="c-fresh">0</b></span>
+      <span>inflight <b id="c-inflight">0</b></span>
+      <span>error <b id="c-error">0</b></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <label>Backend queue (live)</label>
+    <div class="stats" id="stats"><span class="muted">loading…</span></div>
+  </div>
+
+  <div class="card">
+    <label>Submissions</label>
+    <table>
+      <thead><tr><th>#</th><th>URL</th><th>status</th><th>scan_id</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let urls = [], running = false, stopFlag = false;
+const counts = { sent:0, queued:0, fresh:0, inflight:0, error:0 };
+
+function parse(text) {
+  return text.split(/\r?\n/).map(l => l.trim())
+             .filter(l => l && !l.startsWith('#'));
+}
+
+$('file').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  urls = parse(await f.text());
+  $('loaded').textContent = `${urls.length} URL(s) loaded from ${f.name}`;
+  $('c-total').textContent = urls.length;
+  $('go').disabled = urls.length === 0;
+});
+
+function setCounts() {
+  for (const k of Object.keys(counts)) $('c-'+k).textContent = counts[k];
+  $('prog').style.width = urls.length ? (counts.sent/urls.length*100)+'%' : '0';
+}
+
+function addRow(i, url) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${i+1}</td><td title="${url}">${url}</td>`+
+                 `<td id="st-${i}"><span class="muted">…</span></td><td id="id-${i}" class="muted"></td>`;
+  $('rows').prepend(tr);
+}
+
+function setStatus(i, status, scanId) {
+  $('st-'+i).innerHTML = `<span class="pill s-${status}">${status}</span>`;
+  if (scanId) $('id-'+i).textContent = scanId.slice(0,8);
+}
+
+async function submitOne(url) {
+  try {
+    const r = await fetch('/scan', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({url})
+    });
+    if (!r.ok && r.status !== 200 && r.status !== 202) {
+      counts.error++; return {status:'error'};
+    }
+    const j = await r.json();
+    counts[j.status] = (counts[j.status]||0) + 1;
+    return j;
+  } catch (e) {
+    counts.error++; return {status:'error'};
+  }
+}
+
+$('go').addEventListener('click', async () => {
+  if (running) return;
+  running = true; stopFlag = false;
+  $('go').disabled = true; $('stop').disabled = false; $('file').disabled = true;
+  for (const k of Object.keys(counts)) counts[k] = 0;
+  $('rows').innerHTML = ''; setCounts();
+  const delay = Math.max(0, parseInt($('delay').value)||0);
+
+  for (let i = 0; i < urls.length; i++) {
+    if (stopFlag) break;
+    addRow(i, urls[i]);
+    const res = await submitOne(urls[i]);   // one at a time
+    counts.sent++;
+    setStatus(i, res.status || 'error', res.scan_id);
+    setCounts();
+    if (delay) await new Promise(r => setTimeout(r, delay));
+  }
+  running = false;
+  $('go').disabled = false; $('stop').disabled = true; $('file').disabled = false;
+});
+
+$('stop').addEventListener('click', () => { stopFlag = true; });
+
+async function pollStats() {
+  try {
+    const s = await (await fetch('/stats')).json();
+    const q = s.queue || {};
+    const cell = (label, val) => `<div class="stat"><b>${val}</b><span>${label}</span></div>`;
+    const tiers = ['static','render'];
+    let html = cell('results total', s.results_total ?? 0);
+    for (const t of tiers) {
+      const st = q[t] || {};
+      html += cell(`${t} queued`, st.queued||0) + cell(`${t} done`, st.done||0);
+      if (st.error) html += cell(`${t} error`, st.error);
+    }
+    $('stats').innerHTML = html;
+  } catch (e) { $('stats').innerHTML = '<span class="muted">backend unreachable</span>'; }
+}
+pollStats(); setInterval(pollStats, 2000);
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+# Sample URL list for the GUI (one URL per line; blank lines and # comments ignored)
+https://www.theverge.com/
+https://en.wikipedia.org/wiki/Online_advertising
+https://www.bbc.com/news
+https://arstechnica.com/
+https://techcrunch.com/
