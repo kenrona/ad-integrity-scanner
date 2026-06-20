@@ -1,9 +1,23 @@
 # Ad Integrity Scanner
 
-Local service that accepts a URL, scans the ad environment (display + OLV/video),
-computes integrity metrics, and stores `{url → metrics + scores}` in Postgres.
+> Send a URL → get a transparent, 0–100 **integrity score** for the ad environment that display and OLV/video ads would run in, backed by ~60 raw signals.
 
-See [`PLAN.md`](./PLAN.md) for the full design and roadmap, and
+A local-first service that accepts a URL, scans the ad environment, computes
+integrity metrics, and stores `{url → metrics + scores}` in Postgres. Built in
+the spirit of commercial tools like Sincera / Scope3 / IAS — but in-house, with
+no paid vendor APIs.
+
+**Highlights**
+- **Hybrid crawl** — cheap static HTTP fetch on every URL + headless-Chromium render on a sampled/prioritized subset (the render tier also gets through bot-protected inventory the static fetch can't).
+- **7 weighted sub-scores** → one composite, each shipping a `score_breakdown` of the raw inputs behind it (nothing opaque):
+  supply-chain transparency · ad experience/clutter · MFA ad-load risk · performance · video/OLV · brand suitability · privacy.
+- **Deep ad-layout geometry** — A2CR, above/below-fold counts, ad sizes (IAB), inter-ad gaps, sticky/interstitial, first-screen whitespace, MRC time-weighted viewability, GIVT validity checks.
+- **Supply-chain** — ads.txt + **sellers.json cross-resolution** (global per-ad-system cache) for real supply-path transparency.
+- **CDP-authoritative** page weight / requests / cookies / CPU; **embedding** content + brand-suitability classifier (model2vec, keyword fallback).
+- **Scales on one box** toward ~1M URLs/day: async endpoint, Postgres-backed queue, tiered-TTL dedup, maintenance reaper, Parquet/CSV analytics, and a browser GUI.
+
+See [`PLAN.md`](./PLAN.md) for the full design and roadmap,
+[`DATA_DICTIONARY.md`](./DATA_DICTIONARY.md) for every field, and
 [`METRICS.md`](./METRICS.md) for the **metrics dictionary** — every metric with
 its definition, raw vs derived type, and (for derived scores) the raw inputs +
 formula behind it. Each record also carries a `score_breakdown` pairing every
@@ -17,7 +31,7 @@ Implemented:
 - **Postgres-backed work queue** (`FOR UPDATE SKIP LOCKED`) — no Redis/Docker needed. Failed jobs requeue up to `AI_MAX_ATTEMPTS`, then park as `error`.
 - **Static tier:** fetches `ads.txt` / `app-ads.txt` / `robots.txt` / `sellers.json` (per-domain, 24h cache) + page HTML; parses supply-chain transparency, ad-tech footprint, content, video hints.
 - **Render tier (Playwright/Chromium):** persistent browser pool renders a sampled subset (`AI_RENDER_SAMPLE_RATE`); measures GPT ad slots / A2CR / above-fold / refresh, Prebid bidders, CMP (TCF/GPP/USP/GPC), video/OLV (autoplay), and Core Web Vitals (LCP/CLS) + page weight. Merges with static signals and re-scores the same `scan_id`.
-- **MFA / ad-load risk** (on-page ad load: A2CR + slots + above-fold + refresh, plus thin-content/link-density), **content category** + **brand-suitability tier** (in-house keyword classifier, flagged heuristic).
+- **MFA / ad-load risk** (on-page ad load: A2CR + slots + above-fold + refresh, plus thin-content/link-density), **content category** + **brand-suitability tier** (zero-shot embedding classifier, keyword fallback). Bot-blocked pages are classified from the rendered DOM (`content_source`).
 - **Sub-scores** — supply_chain, ad_experience, mfa, performance, video (when present), brand_suitability, privacy — plus a weight-normalized composite `integrity_score` and confidence (0.4 static-only → 0.85 render-backed).
 - `GET /scan/{scan_id}` — status / result lookup. `GET /stats` — queue depth + result counts.
 - Structured `key=value` logging (`ai.*` loggers).
@@ -26,10 +40,11 @@ Implemented:
 - **Analytics export** — flatten `scan_results` → Parquet, queryable with DuckDB (batch/analytics read path).
 - **Browser GUI** at `/` — pick a file of URLs and submit them one at a time, with live progress + backend queue stats.
 
-> **Note on content category / brand suitability:** these come from a dependency-free
-> keyword classifier, not ML or a vendor. Word-matching can't distinguish "an article
-> *about* drugs" from drug-marketplace content, so thresholds are biased against
-> flagging and outputs are marked `heuristic`. Treat them as advisory hints.
+> **Note on content category / brand suitability:** classified by zero-shot
+> static embeddings (model2vec), with the keyword lexicon as a fallback when the
+> model can't load. No vendor APIs. Embeddings judge *topic*, so they can flag
+> content strongly *about* crime/violence even when reporting on it; outputs are
+> marked `heuristic`. Treat them as advisory hints.
 
 ## Why Postgres for the queue (not Redis)
 
@@ -155,3 +170,7 @@ sql/schema.sql         tables: scan_queue, scan_ledger, domain_signals, scan_res
 tests/                 unit (normalize/parser/scoring/content/ssrf/analytics)
                        + integration (ledger/queue/maintenance)
 ```
+
+## License
+
+[MIT](./LICENSE) © 2026 Kenneth Rona
