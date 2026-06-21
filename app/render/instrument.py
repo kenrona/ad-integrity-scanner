@@ -153,6 +153,10 @@ COLLECT_JS = r"""
     });
 
     const filled = slots.filter(s => s.area > 0);
+    // Fold counts exclude hidden/off-screen ads (not part of the visible fold);
+    // they're reported separately as GIVT signals.
+    const placed = filled.filter(s => !s.hidden && !s.offscreen);
+    const interIdx = new Set(filled.filter(s => s.w >= 0.9*vw && s.h >= 0.9*vh).map(s => s.idx));
     const bySize = {};
     filled.forEach(s => { const k = s.w+'x'+s.h; bySize[k] = (bySize[k]||0)+1; });
     const sorted = [...filled].sort((a,b) => a.top - b.top);
@@ -195,9 +199,9 @@ COLLECT_JS = r"""
       slot_count: slots.length,
       filled_count: filled.length,
       empty_count: slots.length - filled.length,
-      above_fold_count: filled.filter(s => s.above_fold).length,
-      below_fold_count: filled.filter(s => !s.above_fold).length,
-      sticky_count: slots.filter(s => s.sticky).length,
+      above_fold_count: placed.filter(s => s.above_fold).length,
+      below_fold_count: placed.filter(s => !s.above_fold).length,
+      sticky_count: slots.filter(s => s.sticky && !interIdx.has(s.idx)).length,
       interstitial: interstitial,
       hidden_ad_count: hidden,
       tiny_ad_count: tiny,

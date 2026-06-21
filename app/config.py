@@ -30,6 +30,10 @@ class Settings(BaseSettings):
 
     strip_tracking_params: bool = True
 
+    # SSRF allowlist (comma-separated hosts) — permits otherwise-blocked hosts
+    # such as 127.0.0.1 for the local accuracy test-suite. Empty in production.
+    ssrf_allow_hosts: str = ""
+
     # User-agent for fetch + render. A realistic Chrome UA is used so bot-protected
     # inventory (Cloudflare etc.) serves the real page — standard for "synthetic
     # user" ad-environment measurement. Set a self-identifying UA to be transparent

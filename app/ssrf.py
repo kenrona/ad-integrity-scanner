@@ -14,11 +14,21 @@ import asyncio
 import ipaddress
 import socket
 
+from app.config import get_settings
+
 _BLOCKED_HOSTNAMES = {"metadata.google.internal", "localhost"}
 
 
 class SSRFError(ValueError):
     """Raised when a target host resolves to disallowed address space."""
+
+
+def _allowlisted(host: str) -> bool:
+    raw = get_settings().ssrf_allow_hosts
+    if not raw:
+        return False
+    allow = {h.strip().lower() for h in raw.split(",") if h.strip()}
+    return host.lower().strip("[]") in allow
 
 
 def _ip_blocked(ip_str: str) -> bool:
@@ -41,6 +51,8 @@ def literal_host_blocked(host: str | None) -> bool:
     if not host:
         return True
     h = host.lower().strip("[]")
+    if _allowlisted(h):
+        return False
     if h in _BLOCKED_HOSTNAMES:
         return True
     return _ip_blocked(h)
@@ -51,6 +63,8 @@ async def assert_public_host(host: str | None, port: int = 443) -> None:
     if not host:
         raise SSRFError("missing host")
     h = host.lower().strip("[]")
+    if _allowlisted(h):
+        return
     if h in _BLOCKED_HOSTNAMES:
         raise SSRFError(f"blocked host: {h}")
 

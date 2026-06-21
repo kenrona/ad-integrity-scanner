@@ -137,6 +137,24 @@ AI_DATABASE_URL="postgresql://$USER@localhost:5432/ad_integrity_test" \
   pytest tests/test_ledger.py -q
 ```
 
+## Accuracy suite (ground truth)
+
+`tests/accuracy/` generates ~200 self-contained fixture pages whose ad layouts
+we fully control — so the **true values are known** — covering different sizes,
+counts, above/below-fold splits, sticky/interstitial, GIVT traps (hidden, 1×1,
+off-screen, stacked), decoys, dormant CMPs, and category/suitability text. The
+harness serves them locally, scans each through the real render path, and scores
+measured vs. truth:
+
+```bash
+AI_SSRF_ALLOW_HOSTS=127.0.0.1 PYTHONPATH=. python -m tests.accuracy.run   # scorecard
+AI_ACCURACY=1 AI_SSRF_ALLOW_HOSTS=127.0.0.1 pytest tests/test_accuracy.py  # as a gated test
+```
+
+Deterministic metrics (slot/fold/size/GIVT counts, A2CR, CMP presence) currently
+score **100%**; content-category ~98%. The generator's truth logic is also unit-
+tested without rendering (runs in the normal `pytest`).
+
 ## Layout
 
 ```
