@@ -175,6 +175,20 @@ Transparent **per-category sub-scores (0–100) + a config-weighted composite In
 ---
 
 ## 8. Resolved — no open questions
-All scoping decisions captured above. **Language: Python** (confirmed — the cost center is Chromium, which is language-agnostic, so Python wins on parsing/scoring/analytics velocity). **All four phases (0–4) are built and verified, plus a pre-Phase-4 security/efficiency review and a browser GUI.** The system is feature-complete against this plan; further work is operational tuning and the ML-classifier upgrade noted under Phase 3.
+All scoping decisions captured above. **Language: Python** (confirmed — the cost center is Chromium, which is language-agnostic). Phases 0–4 plus a security/efficiency review and a browser GUI are all built and verified.
+
+### Post-Phase-4 — metrics expansion toward commercial parity (all DONE)
+The per-phase caveats above were superseded by a metrics-v2 build (grounded in a competitive parity catalog):
+- **CDP plane** — authoritative page weight / requests / cookies / CPU (Resource-Timing under-counted ad bytes ~2×); **multi-source ad detection** (GPT runtime + ad-host iframes + markers, not GPT-only); images kept during render so page weight is accurate.
+- **Deep ad-layout geometry** — ad sizes (IAB), above/below-fold, inter-ad gaps, sticky (CSS + **behavioral**), interstitial, first-screen whitespace, ad density per screen/1000px, ad-attributable CLS.
+- **MRC time-weighted viewability** (ads-in-view / ads-viewable-1s); **GIVT** validity (hidden/tiny/offscreen/stacked); accurate refresh.
+- **CWV**: CLS **median-of-N** (`AI_RENDER_SAMPLES`); **synthetic INP** (lab, scripted interaction — not field RUM).
+- **sellers.json cross-resolution** (global per-ad-system cache) → supply-path transparency; **schain validation** (Prebid schain `asi` vs ads.txt).
+- **Tracker classification** via the bundled Disconnect dataset (owner-collapsed); **CMP detection** via live API + locator iframes + vendor scripts (region-robust); **realistic Chrome UA** (bot-protected inventory).
+- **Embedding content / brand-suitability classifier** (model2vec, keyword fallback) — replaced the keyword-only classifier; bot-blocked pages classify from the **rendered DOM**.
+- Every derived score ships a **`score_breakdown`** of raw inputs. Full field reference: [`DATA_DICTIONARY.md`](./DATA_DICTIONARY.md).
+- **Ground-truth accuracy suite** (`tests/accuracy/`, ~200 fixtures) — 100% on deterministic metrics.
+
+**Remaining work is external-data-dependent only** (full 3-way schain `sid` match, ID absorption, GPID, paid-traffic dependence, SIVT/fraud, attention, carbon, real-user field CWV/INP) — out of scope for an in-house scanner.
 
 **Current composite weights** (in `app/scoring.py`, renormalized over present sub-scores): supply_chain 0.20, ad_experience 0.22, mfa 0.18, performance 0.12, video 0.10, brand_suitability 0.10, privacy 0.08.

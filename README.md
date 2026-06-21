@@ -25,22 +25,18 @@ its definition, raw vs derived type, and (for derived scores) the raw inputs +
 formula behind it. Each record also carries a `score_breakdown` pairing every
 sub-score with the raw data it was computed from (`GET /scan/{id}`).
 
-## Status: Phase 4 complete (hardening + analytics + GUI)
+## Status: feature-complete (validated by a 198-page ground-truth suite)
 
 Implemented:
-- `POST /scan` — async fire-and-forget intake (returns `202` + `scan_id`).
-- URL normalization + dedup via a tiered-TTL **scan ledger**.
-- **Postgres-backed work queue** (`FOR UPDATE SKIP LOCKED`) — no Redis/Docker needed. Failed jobs requeue up to `AI_MAX_ATTEMPTS`, then park as `error`.
-- **Static tier:** fetches `ads.txt` / `app-ads.txt` / `robots.txt` / `sellers.json` (per-domain, 24h cache) + page HTML; parses supply-chain transparency, ad-tech footprint, content, video hints.
-- **Render tier (Playwright/Chromium):** persistent browser pool renders a sampled subset (`AI_RENDER_SAMPLE_RATE`); measures GPT ad slots / A2CR / above-fold / refresh, Prebid bidders, CMP (TCF/GPP/USP/GPC), video/OLV (autoplay), and Core Web Vitals (LCP/CLS) + page weight. Merges with static signals and re-scores the same `scan_id`.
-- **MFA / ad-load risk** (on-page ad load: A2CR + slots + above-fold + refresh, plus thin-content/link-density), **content category** + **brand-suitability tier** (zero-shot embedding classifier, keyword fallback). Bot-blocked pages are classified from the rendered DOM (`content_source`).
-- **Sub-scores** — supply_chain, ad_experience, mfa, performance, video (when present), brand_suitability, privacy — plus a weight-normalized composite `integrity_score` and confidence (0.4 static-only → 0.85 render-backed).
-- `GET /scan/{scan_id}` — status / result lookup. `GET /stats` — queue depth + result counts.
-- Structured `key=value` logging (`ai.*` loggers).
-
-- **Maintenance worker** — reaps stuck `processing` jobs (crash recovery), prunes old terminal queue rows (bounds growth), and optionally re-enqueues TTL-expired pages (`AI_RESCAN_ENABLED`).
-- **Analytics export** — flatten `scan_results` → Parquet, queryable with DuckDB (batch/analytics read path).
-- **Browser GUI** at `/` — pick a file of URLs and submit them one at a time, with live progress + backend queue stats.
+- `POST /scan` — async fire-and-forget intake (returns `202` + `scan_id`); `GET /scan/{id}` (status/result + `score_breakdown`); `GET /stats`; browser **GUI** at `/`.
+- URL normalization + dedup via a tiered-TTL **scan ledger**; **Postgres-backed work queue** (`FOR UPDATE SKIP LOCKED`, no Redis/Docker) with retry + reaper + pruning.
+- **SSRF guard** (private/metadata blocking on every hop) + realistic-Chrome UA so bot-protected inventory serves the real page; the render tier gets through Cloudflare where static fetch can't.
+- **Static tier:** `ads.txt` / `app-ads.txt` / `robots.txt` (per-domain 24h cache) + **sellers.json cross-resolution** (global per-ad-system cache → supply-path transparency) + page HTML parsing.
+- **Render tier (Playwright/Chromium):** persistent pool renders a sampled subset (`AI_RENDER_SAMPLE_RATE`) with two planes — in-page JS (geometry, viewability, consent, prebid, video) + **CDP** (authoritative bytes/requests/cookies/CPU). Captures: ad-slot geometry (A2CR, above/below-fold, sizes, gaps, sticky, interstitial, first-screen whitespace), **MRC time-weighted viewability**, **GIVT** validity (hidden/tiny/offscreen/stacked), ad refresh, CWV (LCP/CLS, median-of-N optional) + **synthetic INP**, Prebid bidders + **schain validation**, CMP (TCF/GPP/USP/GPC + vendor/locator detection), tracker classification (Disconnect dataset, owner-collapsed), and video/OLV (autoplay, viewability ≥2s, instream/outstream).
+- **7 sub-scores** — supply_chain, ad_experience, mfa, performance, video, brand_suitability, privacy — → weight-normalized composite `integrity_score`, each with a `score_breakdown` of raw inputs. Confidence 0.4 static → 0.85 render.
+- **MFA / ad-load risk** (on-page ad load + thin-content/link-density), **content category** + **brand-suitability** via zero-shot embeddings (model2vec, keyword fallback); bot-blocked pages classify from the rendered DOM (`content_source`).
+- **Maintenance worker** (reaper + queue pruning + optional TTL re-scan), **analytics export** (Parquet/CSV via DuckDB), structured `ai.*` logging.
+- **Ground-truth accuracy suite** (`tests/accuracy/`, ~200 fixtures) — 100% on deterministic metrics.
 
 > **Note on content category / brand suitability:** classified by zero-shot
 > static embeddings (model2vec), with the keyword lexicon as a fallback when the
@@ -179,16 +175,17 @@ app/
   content.py           keyword content/brand-suitability classifier (fallback)
   content_ml.py        zero-shot embedding classifier (model2vec)
   datadict.py          generates DATA_DICTIONARY.md
+  data/                bundled Disconnect tracker dataset
   parsers/             ads.txt + sellers.json + HTML parsers
   render/              Playwright pool (browser.py), collector (collect.py),
-                       in-page JS (instrument.py)
+                       in-page JS (instrument.py), CDP net accounting (netaccount.py)
   workers/
     static_worker.py   static tier; enqueues render jobs per sampling gate
     render_worker.py   render tier; merges + re-scores the same scan_id
     maintenance.py     reaper + queue pruning + TTL re-scan loop
-sql/schema.sql         tables: scan_queue, scan_ledger, domain_signals, scan_results
+sql/schema.sql         scan_queue, scan_ledger, domain_signals, sellers_json_cache, scan_results
 tests/                 unit (normalize/parser/scoring/content/ssrf/analytics)
-                       + integration (ledger/queue/maintenance)
+                       + integration (ledger/queue/maintenance) + accuracy/ (ground-truth)
 ```
 
 ## License
