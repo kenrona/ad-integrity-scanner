@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     render_sample_rate: float = 1.0
     render_concurrency: int = 2
     render_dwell_ms: int = 8000   # longer dwell improves refresh + viewability capture
+    render_samples: int = 1       # >1 = render N times, take median CLS (N× cost)
     # Resource types aborted during render. Default keeps images (accurate page
     # weight); add 'image' to cut bandwidth at the cost of weight accuracy.
     render_block_resources: str = "font,media"

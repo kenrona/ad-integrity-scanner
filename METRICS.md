@@ -128,10 +128,14 @@ Grounded in the union of what Sincera/OpenSincera, Scope3, IAS, DoubleVerify, Jo
 - **Ad density** per screen / per 1000px; **interstitial detection**; **ad-attributable CLS**.
 - **CPU seconds** + **CDP request / third-party-host counts**; **video player area + large-player flag**.
 
-### Still missing (render)
-- **CLS median-of-N renders** (varies run-to-run); **CWV INP** (needs real interaction).
-- **Behavioral sticky confirmation** (re-read rect after scroll) and **instream-vs-outstream** classification; **video viewability** (≥50% ≥2s).
-- **Tracker classification via the full DuckDuckGo Tracker Radar / Disconnect dataset** (we ship a curated list + entity-owner collapse as a drop-in point).
+### ✅ Done (render, latest)
+- **CLS median-of-N renders** — `AI_RENDER_SAMPLES>1` renders N times and takes the median CLS (config-gated; N× cost).
+- **Synthetic INP** (`inp_ms`) — a scripted keyboard interaction + Event Timing observer yields a lab interaction-latency proxy. *(Not real-user field INP.)*
+- **Behavioral sticky** — a scroll probe re-reads ad rects; ads that don't move are anchored (catches JS-driven sticky CSS misses).
+- **instream-vs-outstream** (`video_instream_count` / `video_outstream_count`) — heuristic from player context + ad-slot containment + muted-autoplay.
+- **Video viewability** (`video_viewable_2s`) — `<video>` held ≥50% visible ≥2s (MRC video).
+- **Tracker classification via the Disconnect dataset** (4,438 domains bundled) with **owner-collapse** → `tracker_entity_count`, `tracker_categories`. (Full DuckDuckGo Tracker Radar — thousands of files — remains a heavier drop-in.)
+- **SupplyChain (schain) validation** — Prebid-declared schain captured (`schain_present`/`schain_complete`/`schain_node_count`); each hop's `asi` validated against ads.txt (`schain_valid`). Full sid==seller_id still needs the bid-stream.
 
 ### ✅ Done (static) — sellers.json cross-resolution
 - ads.txt accounts resolved against each ad system's `sellers.json` (global 7-day cache, streaming-capped, top-30 systems): `total_supply_paths`, `resolved_sellers`, `seller_resolution_rate`, `intermediary_ratio`, `confidential_sellers`, `direct_domain_match`; folded into the `supply_chain` score. *(Huge sellers.json files — e.g. Google's — exceed the 15MB cap and are recorded as present-but-too-large rather than resolved; raise `AI_SELLERS_JSON_MAX_BYTES` to include them.)*
@@ -142,11 +146,9 @@ Grounded in the union of what Sincera/OpenSincera, Scope3, IAS, DoubleVerify, Jo
 ### ✅ Done — embedding content classifier
 - `content_category` + brand-suitability now use **zero-shot static embeddings** (model2vec) with keyword fallback. Fixes the keyword classifier's topical false-positives (e.g. an article *about* advertising no longer flags "adult"). Limitation: embeddings judge topic, so crime/violence *reporting* can still land at elevated suitability tiers; a fine-tuned/larger model would separate report-vs-promote.
 
-### Still missing (static)
-- **SupplyChain (schain) validation** — ads.txt account == sellers.json seller_id == schain sid (needs bid-stream schain object).
-
 ### Out of scope in-house (need bid-stream / external data)
-- **ID absorption rate**, **GPID adoption** — require RTB bid-stream access.
+- **Full 3-way schain validation** (sid == sellers.json seller_id), **ID absorption rate**, **GPID adoption** — require RTB bid-stream access.
+- **Real-user (field) INP / CWV** — requires RUM, not a synthetic lab scan.
 - **Paid-traffic dependence** (Jounce/DeepSee primary MFA axis) — needs traffic-source data; **excluded by project decision** (our MFA is on-page ad-load only).
 - **SIVT/fraud, full attention models** (IAS/DV proprietary), **carbon/gCO2PM** (Scope3 model).
 

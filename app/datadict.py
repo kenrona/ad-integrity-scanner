@@ -68,7 +68,12 @@ FIELD_DEFS: dict[str, tuple[str, str]] = {
     "ad_cls_share": ("Fraction of total CLS attributable to ad nodes.", "derived"),
     # performance / footprint
     "lcp_ms": ("Largest Contentful Paint (ms, lab).", "raw"),
-    "cls": ("Cumulative Layout Shift (lab; varies between renders).", "raw"),
+    "cls": ("Cumulative Layout Shift (lab; median-of-N when AI_RENDER_SAMPLES>1).", "raw"),
+    "inp_ms": ("Synthetic INP proxy from a scripted interaction (lab, not field RUM).", "derived"),
+    "tracker_entity_count": ("Distinct tracker OWNERS (Disconnect dataset, owner-collapsed).", "derived"),
+    "schain_present": ("Prebid declared a SupplyChain object.", "raw"),
+    "schain_valid": ("schain complete and every hop's asi is authorized in ads.txt.", "derived"),
+    "video_viewable_2s": ("Videos that held >=50% visibility for >=2s (MRC video viewability).", "derived"),
     "page_weight_bytes": ("Total encoded bytes over the network (CDP-authoritative).", "raw"),
     "request_count": ("# network requests (CDP).", "raw"),
     "third_party_host_count": ("Distinct non-first-party registrable domains (CDP).", "raw"),

@@ -45,10 +45,13 @@ _METRIC_COLS = [
     ("ad_gap_median_px", "INTEGER"), ("ad_refreshing", "BOOLEAN"),
     ("min_refresh_seconds", "DOUBLE"), ("ad_cls_share", "DOUBLE"),
     # performance / footprint (bytes/requests/cpu are CDP-authoritative)
-    ("lcp_ms", "INTEGER"), ("cls", "DOUBLE"), ("page_weight_bytes", "BIGINT"),
+    ("lcp_ms", "INTEGER"), ("cls", "DOUBLE"), ("inp_ms", "INTEGER"),
+    ("page_weight_bytes", "BIGINT"),
     ("request_count", "INTEGER"), ("third_party_host_count", "INTEGER"),
-    ("tracker_domain_count", "INTEGER"), ("cpu_task_duration_s", "DOUBLE"),
-    ("dom_node_count", "INTEGER"),
+    ("tracker_domain_count", "INTEGER"), ("tracker_entity_count", "INTEGER"),
+    ("cpu_task_duration_s", "DOUBLE"), ("dom_node_count", "INTEGER"),
+    ("schain_present", "BOOLEAN"), ("schain_valid", "BOOLEAN"),
+    ("video_viewable_2s", "INTEGER"),
     # consent
     ("cmp_present", "BOOLEAN"), ("cmp_vendor", "VARCHAR"),
     ("cmp_tcf", "BOOLEAN"), ("cmp_gpp", "BOOLEAN"), ("gpc", "BOOLEAN"),

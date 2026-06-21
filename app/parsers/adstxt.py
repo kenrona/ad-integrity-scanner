@@ -53,6 +53,7 @@ def parse_ads_txt(text: str) -> dict[str, Any]:
         # Share of authorized-direct relationships; higher = more transparent.
         "direct_ratio": round(direct / rel_total, 4) if rel_total else 0.0,
         "distinct_ad_systems": len(ad_systems),
+        "ad_systems": sorted(ad_systems),     # for schain asi validation
         "distinct_accounts": len(accounts),
         "malformed_lines": malformed,
         "has_owner_domain": "OWNERDOMAIN" in variables,

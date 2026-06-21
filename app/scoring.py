@@ -246,6 +246,27 @@ def mfa_score(signals): return _mfa(signals)[0]
 def brand_suitability_score(signals): return _brand_suitability(signals)[0]
 
 
+def _schain_metrics(schain: dict, ad_systems: list[str]) -> dict[str, Any]:
+    """Validate the Prebid-declared SupplyChain against the publisher's ads.txt.
+
+    Full 3-way validation (schain sid == sellers.json seller_id) needs the
+    bid-stream; here we check that each schain hop's `asi` (ad system) is an
+    authorized seller in ads.txt — a meaningful in-house consistency check.
+    """
+    nodes = schain.get("nodes") or []
+    if not nodes:
+        return {"schain_present": False, "schain_valid": None}
+    asys = set(ad_systems)
+    authorized = sum(1 for n in nodes if n.get("asi") in asys) if asys else 0
+    return {
+        "schain_present": True,
+        "schain_complete": bool(schain.get("complete")),
+        "schain_node_count": len(nodes),
+        "schain_asi_authorized": authorized,
+        "schain_valid": bool(schain.get("complete") and asys and authorized == len(nodes)),
+    }
+
+
 def _flatten_metrics(signals: dict[str, Any]) -> dict[str, Any]:
     domain_sig = signals.get("domain") or {}
     ads = domain_sig.get("ads_txt") or {}
@@ -333,18 +354,22 @@ def _flatten_metrics(signals: dict[str, Any]) -> dict[str, Any]:
             "min_refresh_seconds": gpt.get("min_refresh_seconds"),
             "first_screen_whitespace": layout.get("first_screen_whitespace"),
             "dom_node_count": layout.get("dom_node_count"),
-            # ad-tech
+            # ad-tech + SupplyChain (schain) validation vs ads.txt
             "prebid_bidder_count": prebid.get("bidder_count"),
             "prebid_version": prebid.get("version"),
+            **_schain_metrics(prebid.get("schain") or {}, ads.get("ad_systems") or []),
             # performance (bytes/requests/cpu are CDP-authoritative)
             "lcp_ms": cwv.get("lcp_ms"),
             "cls": cwv.get("cls"),
+            "inp_ms": cwv.get("inp_ms"),                 # synthetic (lab interaction)
             "ad_cls_share": cwv.get("ad_cls_share"),
             "page_weight_bytes": res.get("page_weight_bytes"),
             "bytes_by_type": res.get("bytes_by_type"),
             "request_count": res.get("request_count"),
             "third_party_host_count": res.get("third_party_host_count"),
             "tracker_domain_count": res.get("tracker_domain_count"),
+            "tracker_entity_count": res.get("tracker_entity_count"),
+            "tracker_categories": res.get("tracker_categories"),
             "ad_request_count": res.get("ad_request_count"),
             "cpu_task_duration_s": cpu.get("task_duration_s"),
             # privacy
@@ -361,6 +386,9 @@ def _flatten_metrics(signals: dict[str, Any]) -> dict[str, Any]:
             "has_video": video.get("has_video"),
             "video_autoplay": video.get("autoplay_count"),
             "video_muted_autoplay": video.get("muted_autoplay_count"),
+            "video_viewable_2s": video.get("viewable_2s"),
+            "video_instream_count": video.get("instream_count"),
+            "video_outstream_count": video.get("outstream_count"),
             "max_player_area_px": video.get("max_player_area_px"),
             "large_player": video.get("large_player"),
         })

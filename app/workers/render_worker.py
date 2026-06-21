@@ -21,7 +21,7 @@ from app.db import close_pool, init_pool
 from app.logging_config import configure_logging, get_logger, kv
 from app.queue import Job
 from app.render.browser import RenderPool
-from app.render.collect import render_page
+from app.render.collect import render_page_sampled
 from app.scoring import assemble
 
 _stop = asyncio.Event()
@@ -70,7 +70,8 @@ async def _scan_render(pool: asyncpg.Pool, render_pool: RenderPool, job: Job) ->
     settings = get_settings()
     async with pool.acquire() as conn:
         signals = await _load_static_signals(conn, job.scan_id)
-    render_data = await render_page(render_pool, job.url, dwell_ms=settings.render_dwell_ms)
+    render_data = await render_page_sampled(
+        render_pool, job.url, dwell_ms=settings.render_dwell_ms, samples=settings.render_samples)
     signals["render"] = render_data
     if render_data.get("ok"):
         _backfill_content(signals, render_data)

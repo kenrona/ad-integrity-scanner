@@ -68,13 +68,18 @@ These are the columns in the CSV/Parquet export, in order.
 | `min_refresh_seconds` | DOUBLE | raw | Shortest observed refresh interval (s). |
 | `ad_cls_share` | DOUBLE | derived | Fraction of total CLS attributable to ad nodes. |
 | `lcp_ms` | INTEGER | raw | Largest Contentful Paint (ms, lab). |
-| `cls` | DOUBLE | raw | Cumulative Layout Shift (lab; varies between renders). |
+| `cls` | DOUBLE | raw | Cumulative Layout Shift (lab; median-of-N when AI_RENDER_SAMPLES>1). |
+| `inp_ms` | INTEGER | derived | Synthetic INP proxy from a scripted interaction (lab, not field RUM). |
 | `page_weight_bytes` | BIGINT | raw | Total encoded bytes over the network (CDP-authoritative). |
 | `request_count` | INTEGER | raw | # network requests (CDP). |
 | `third_party_host_count` | INTEGER | raw | Distinct non-first-party registrable domains (CDP). |
 | `tracker_domain_count` | INTEGER | raw | Third-party domains matching the tracker list. |
+| `tracker_entity_count` | INTEGER | derived | Distinct tracker OWNERS (Disconnect dataset, owner-collapsed). |
 | `cpu_task_duration_s` | DOUBLE | raw | Main-thread task time in seconds (CDP Performance). |
 | `dom_node_count` | INTEGER | raw | Total DOM elements. |
+| `schain_present` | BOOLEAN | raw | Prebid declared a SupplyChain object. |
+| `schain_valid` | BOOLEAN | derived | schain complete and every hop's asi is authorized in ads.txt. |
+| `video_viewable_2s` | INTEGER | derived | Videos that held >=50% visibility for >=2s (MRC video viewability). |
 | `cmp_present` | BOOLEAN | derived | A consent-management platform is deployed (live API, locator iframe, or known vendor). |
 | `cmp_vendor` | VARCHAR | raw | Detected CMP vendor (OneTrust, Sourcepoint, Google Funding Choices, ...). |
 | `cmp_tcf` | BOOLEAN | raw | IAB TCF detected (__tcfapi or __tcfapiLocator iframe). |

@@ -33,6 +33,24 @@ INIT_JS = r"""
       window.__ai.cls = cls;
     }).observe({ type: 'layout-shift', buffered: true });
   } catch (e) {}
+  // Event Timing -> synthetic INP proxy (worst interaction latency we observe).
+  window.__ai.maxEvent = 0;
+  try {
+    new PerformanceObserver((l) => {
+      for (const e of l.getEntries()) {
+        const d = e.duration || 0;
+        if (d > window.__ai.maxEvent) window.__ai.maxEvent = d;
+      }
+    }).observe({ type: 'event', buffered: true, durationThreshold: 16 });
+  } catch (e) {}
+  try {
+    new PerformanceObserver((l) => {
+      for (const e of l.getEntries()) {
+        const d = e.processingEnd - e.startTime;
+        if (d > window.__ai.maxEvent) window.__ai.maxEvent = d;
+      }
+    }).observe({ type: 'first-input', buffered: true });
+  } catch (e) {}
   window.googletag = window.googletag || { cmd: [] };
   window.googletag.cmd.push(function () {
     try {
@@ -44,6 +62,27 @@ INIT_JS = r"""
     } catch (e) {}
   });
 })();
+"""
+
+# Behavioral sticky probe: an ad whose viewport-top barely moves when the page
+# scrolls is anchored/sticky (catches JS-driven sticky CSS detection misses).
+STICKY_PROBE_JS = r"""
+() => new Promise(resolve => {
+  const els = Array.from(document.querySelectorAll('[data-ai-ad]'));
+  window.scrollTo(0, 0);
+  const t0 = els.map(e => e.getBoundingClientRect().top);
+  window.scrollTo(0, 900);
+  requestAnimationFrame(() => {
+    const sticky = [];
+    els.forEach((e, i) => {
+      const t1 = e.getBoundingClientRect().top;
+      if (Math.abs(t1 - t0[i]) < 5) sticky.push(+e.getAttribute('data-ai-ad'));
+    });
+    window.scrollTo(0, 0);
+    window.__ai.behavioralSticky = sticky;
+    resolve(sticky.length);
+  });
+})
 """
 
 # Identify + tag + observe ad elements. Returns the count tagged.
@@ -95,6 +134,25 @@ SETUP_JS = r"""
       }).observe(el, { childList: true, subtree: true });
     } catch (e) {}
   });
+
+  // Video viewability: time each <video> spends >=50% in view (MRC video = >=2s).
+  window.__ai.videos = [];
+  document.querySelectorAll('video').forEach((v, i) => {
+    v.setAttribute('data-ai-vid', String(i));
+    const rec = { i, cum_in_view_ms: 0, in_start: null, max_ratio: 0 };
+    window.__ai.videos.push(rec);
+    try {
+      new IntersectionObserver((ents) => {
+        for (const e of ents) {
+          const now = performance.now();
+          if (e.intersectionRatio > rec.max_ratio) rec.max_ratio = e.intersectionRatio;
+          const vis = e.intersectionRatio >= 0.5;
+          if (vis && rec.in_start === null) rec.in_start = now;
+          else if (!vis && rec.in_start !== null) { rec.cum_in_view_ms += now - rec.in_start; rec.in_start = null; }
+        }
+      }, { threshold: [0, 0.5, 1] }).observe(v);
+    } catch (e) {}
+  });
   return window.__ai.ads.length;
 }
 """
@@ -108,6 +166,7 @@ COLLECT_JS = r"""
   out.cwv = {
     lcp_ms: (window.__ai && window.__ai.lcp) ? Math.round(window.__ai.lcp) : null,
     cls: (window.__ai && window.__ai.cls != null) ? Math.round(window.__ai.cls * 1000) / 1000 : null,
+    inp_ms: (window.__ai && window.__ai.maxEvent) ? Math.round(window.__ai.maxEvent) : null,  // synthetic
   };
 
   const IAB = {
@@ -123,6 +182,7 @@ COLLECT_JS = r"""
 
   try {
     const recs = (window.__ai && window.__ai.ads) || [];
+    const beh = new Set((window.__ai && window.__ai.behavioralSticky) || []);
     const pageH = document.documentElement.scrollHeight || vh;
     const pageArea = pageH * vw;
     let adArea = 0; const slots = [];
@@ -144,7 +204,7 @@ COLLECT_JS = r"""
       adArea += w * h;
       slots.push({ idx, w, h, area: w*h, top, left: Math.round(r.left),
         above_fold: top < vh, in_view: r.top < vh && r.bottom > 0,
-        sticky: pos === 'fixed' || pos === 'sticky',
+        sticky: pos === 'fixed' || pos === 'sticky' || beh.has(idx),
         hidden, tiny, offscreen,
         size_name: IAB[w+'x'+h] || (w*h===0 ? 'Unfilled' : 'Custom'),
         viewable_ms: Math.round(cum),
@@ -269,8 +329,19 @@ COLLECT_JS = r"""
       for (const u in resp) (resp[u].bids || []).forEach(b => b.bidderCode && s.add(b.bidderCode));
       bidders = Array.from(s);
     }
+    // SupplyChain (schain) declared in Prebid config — validate asi vs ads.txt.
+    let schain = null;
+    try {
+      let sc = pb && pb.getConfig ? (pb.getConfig('schain') || pb.getConfig().schain) : null;
+      // Normalise the various Prebid shapes to an object with .nodes.
+      let node = sc && (sc.nodes ? sc : (sc.config || (sc.ordered && sc.ordered.config) || sc.ordered));
+      if (node && node.nodes) {
+        schain = { complete: node.complete === 1 || node.complete === true,
+                   nodes: node.nodes.map(n => ({ asi: (n.asi || '').toLowerCase(), sid: String(n.sid || '') })) };
+      }
+    } catch (e) {}
     out.prebid = { present: !!(pb && pb.version), version: pb && pb.version ? String(pb.version) : null,
-      bidders, bidder_count: bidders.length };
+      bidders, bidder_count: bidders.length, schain };
   } catch (e) { out.prebid = { present: false }; }
 
   // ---- Consent / CMP ----
@@ -313,17 +384,35 @@ COLLECT_JS = r"""
   // ---- Video / OLV ----
   try {
     const vids = Array.from(document.querySelectorAll('video'));
-    let maxArea = 0;
-    vids.forEach(v => { const r = v.getBoundingClientRect(); maxArea = Math.max(maxArea, Math.round(r.width*r.height)); });
+    const vrecs = (window.__ai && window.__ai.videos) || [];
+    const vnow = performance.now();
+    const player = (typeof window.jwplayer !== 'undefined') || (typeof window.videojs !== 'undefined');
+    let maxArea = 0, viewable2s = 0, instream = 0, outstream = 0;
+    vids.forEach(v => {
+      const r = v.getBoundingClientRect();
+      maxArea = Math.max(maxArea, Math.round(r.width * r.height));
+      const rec = vrecs[+v.getAttribute('data-ai-vid')] || {};
+      let cum = rec.cum_in_view_ms || 0;
+      if (rec.in_start != null) cum += vnow - rec.in_start;
+      if (cum >= 2000) viewable2s++;
+      // instream = in a content player; outstream = injected/ad-slot/muted-autoplay unit.
+      const inAd = !!v.closest('[data-ai-ad]');
+      if (inAd || (v.autoplay && v.muted && !player && !v.controls)) outstream++;
+      else if (player || v.controls) instream++;
+      else outstream++;
+    });
     out.video = {
       jwplayer: typeof window.jwplayer !== 'undefined',
       videojs: typeof window.videojs !== 'undefined',
       video_tag_count: vids.length,
       autoplay_count: vids.filter(v => v.autoplay).length,
       muted_autoplay_count: vids.filter(v => v.autoplay && v.muted).length,
+      viewable_2s: viewable2s,
+      instream_count: instream,
+      outstream_count: outstream,
       max_player_area_px: maxArea,
       large_player: maxArea >= 242500,        // MRC large-ad threshold
-      has_video: vids.length > 0 || typeof window.jwplayer !== 'undefined' || typeof window.videojs !== 'undefined',
+      has_video: vids.length > 0 || player,
     };
   } catch (e) { out.video = {}; }
 

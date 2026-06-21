@@ -16,8 +16,10 @@ from urllib.parse import urlsplit
 from playwright.async_api import Error as PWError
 from playwright.async_api import TimeoutError as PWTimeout
 
+import statistics
+
 from app.render.browser import RenderPool
-from app.render.instrument import COLLECT_JS, SETUP_JS
+from app.render.instrument import COLLECT_JS, SETUP_JS, STICKY_PROBE_JS
 from app.render.netaccount import NetworkAccountant, count_third_party_cookies
 from app.ssrf import SSRFError, assert_public_host
 
@@ -78,6 +80,18 @@ async def render_page(
         await _auto_scroll(page)
         await asyncio.sleep(dwell_ms / 1000)       # observers accrue time-in-view
 
+        # Behavioral sticky probe (scroll + re-read rects), then a synthetic
+        # interaction so the Event-Timing observer yields an INP proxy.
+        try:
+            await page.evaluate(STICKY_PROBE_JS)
+            # Keyboard only — a blind mouse click could follow a link and navigate
+            # the page away mid-scan. Tab/keydown still yields an Event-Timing entry.
+            await page.keyboard.press("Tab")
+            await page.keyboard.press("Tab")
+            await asyncio.sleep(0.25)
+        except PWError:
+            pass
+
         try:
             data = await page.evaluate(COLLECT_JS)
         except PWError as e:
@@ -104,3 +118,30 @@ async def render_page(
         data["status"] = status
         data["final_url"] = final_url
         return data
+
+
+async def render_page_sampled(
+    pool: RenderPool, url: str, *, dwell_ms: int = 8000, samples: int = 1
+) -> dict[str, Any]:
+    """Render `samples` times and replace run-to-run-variable CLS with the median.
+
+    CLS varies between renders (late-loading ads shift layout differently each
+    time); the median of N is far more stable. Other signals come from the first
+    successful render. samples<=1 is a plain single render.
+    """
+    base = await render_page(pool, url, dwell_ms=dwell_ms)
+    if samples <= 1 or not base.get("ok"):
+        return base
+    cls_vals = []
+    c = (base.get("cwv") or {}).get("cls")
+    if c is not None:
+        cls_vals.append(c)
+    for _ in range(samples - 1):
+        r = await render_page(pool, url, dwell_ms=dwell_ms)
+        c = (r.get("cwv") or {}).get("cls") if r.get("ok") else None
+        if c is not None:
+            cls_vals.append(c)
+    if cls_vals:
+        base.setdefault("cwv", {})["cls"] = round(statistics.median(cls_vals), 3)
+        base["cwv"]["cls_samples"] = cls_vals
+    return base

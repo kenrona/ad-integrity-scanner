@@ -7,12 +7,25 @@ live — so it undercounts page weight badly. The Chrome DevTools Protocol
 """
 from __future__ import annotations
 
+import functools
+import json
+import pathlib
 import re
 from typing import Any
 
 import tldextract
 
 _extract = tldextract.TLDExtract(suffix_list_urls=())
+
+
+@functools.lru_cache(maxsize=1)
+def _tracker_db() -> dict:
+    """Disconnect tracking-protection dataset: registrable domain -> {e:entity, c:category}."""
+    p = pathlib.Path(__file__).resolve().parents[1] / "data" / "disconnect_trackers.json"
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — fall back to the small curated set
+        return {}
 
 _AD_HOST_RE = re.compile(
     r"(googlesyndication|doubleclick|amazon-adsystem|adnxs|criteo|rubiconproject"
@@ -69,8 +82,11 @@ class NetworkAccountant:
         by_type = {k: 0 for k in _TYPE_KEYS}
         third_party: set[str] = set()
         trackers: set[str] = set()
+        tracker_entities: set[str] = set()
+        tracker_categories: dict[str, int] = {}
         ad_requests = 0
         hosts: set[str] = set()
+        db = _tracker_db()
         for rid, meta in self._meta.items():
             b = self._bytes.get(rid, 0)
             t = meta["type"] if meta["type"] in by_type else "Other"
@@ -85,8 +101,15 @@ class NetworkAccountant:
                 hosts.add(reg)
                 if reg != page_reg:
                     third_party.add(reg)
-                if reg in _TRACKER_DOMAINS:
+                hit = db.get(reg) or db.get(host)
+                if hit:
                     trackers.add(reg)
+                    tracker_entities.add(hit.get("e") or reg)   # owner-collapse
+                    cat = hit.get("c") or "Other"
+                    tracker_categories[cat] = tracker_categories.get(cat, 0) + 1
+                elif not db and reg in _TRACKER_DOMAINS:         # fallback set
+                    trackers.add(reg)
+                    tracker_entities.add(reg)
             if _AD_HOST_RE.search(url):
                 ad_requests += 1
         return {
@@ -96,6 +119,9 @@ class NetworkAccountant:
             "distinct_host_count": len(hosts),
             "third_party_host_count": len(third_party),
             "tracker_domain_count": len(trackers),
+            "tracker_entity_count": len(tracker_entities),   # distinct owners
+            "tracker_entities": sorted(tracker_entities)[:40],
+            "tracker_categories": tracker_categories,
             "ad_request_count": ad_requests,
             "source": "cdp",
             "request_overflow": self._overflow,
