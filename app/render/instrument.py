@@ -269,10 +269,41 @@ COLLECT_JS = r"""
       bidders, bidder_count: bidders.length };
   } catch (e) { out.prebid = { present: false }; }
 
-  // ---- Consent ----
+  // ---- Consent / CMP ----
+  // Detect a CMP even when its live API didn't initialise (e.g. an EU TCF prompt
+  // that doesn't fire for our non-EU vantage point): check the spec locator
+  // iframes and known CMP vendor scripts, not just window.__tcfapi.
   try {
-    out.cmp = { tcf: typeof window.__tcfapi === 'function', gpp: typeof window.__gpp === 'function',
-      usp: typeof window.__uspapi === 'function', gpc: navigator.globalPrivacyControl === true };
+    const q = sel => !!document.querySelector(sel);
+    const VENDORS = [
+      [/fundingchoicesmessages\.google|fundingchoices/, 'google-funding-choices'],
+      [/cookielaw\.org|onetrust|cookiepro|otsdkstub/, 'onetrust'],
+      [/consensu\.org|quantcast|cmp\.inmobi/, 'quantcast/iab'],
+      [/sp-prod\.net|sourcepoint|sp-prod|message[0-9]*\.sp-/, 'sourcepoint'],
+      [/privacy-center\.org|didomi/, 'didomi'],
+      [/cookiebot/, 'cookiebot'],
+      [/usercentrics/, 'usercentrics'],
+      [/trustarc|truste/, 'trustarc'],
+      [/osano/, 'osano'], [/termly/, 'termly'], [/sirdata/, 'sirdata'],
+    ];
+    let hay = '';
+    document.querySelectorAll('script[src], iframe[src], link[href]').forEach(e => {
+      hay += ' ' + (e.src || e.href || '');
+    });
+    hay = hay.toLowerCase();
+    let vendor = null;
+    for (const [re, name] of VENDORS) { if (re.test(hay)) { vendor = name; break; } }
+
+    const tcf = typeof window.__tcfapi === 'function' || q('iframe[name="__tcfapiLocator"]');
+    const gpp = typeof window.__gpp === 'function' || q('iframe[name="__gppLocator"]');
+    const usp = typeof window.__uspapi === 'function' || q('iframe[name="__uspapiLocator"]');
+    out.cmp = {
+      tcf, gpp, usp,
+      tcf_api_live: typeof window.__tcfapi === 'function',
+      gpc: navigator.globalPrivacyControl === true,
+      vendor,
+      cmp_present: !!(tcf || gpp || usp || vendor),
+    };
   } catch (e) { out.cmp = {}; }
 
   // ---- Video / OLV ----

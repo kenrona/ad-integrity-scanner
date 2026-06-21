@@ -3,9 +3,22 @@ from app.parsers.html import parse_html
 from app.scoring import (
     ad_experience_score,
     assemble,
+    privacy_score,
     score_static,
     supply_chain_score,
 )
+
+
+def test_privacy_credits_deployed_cmp_without_live_api():
+    # CMP vendor detected but no live API (e.g. EU TCF dormant for a US visitor).
+    vendor_only = privacy_score({"cmp": {"vendor": "onetrust"},
+                                 "resources": {"tracker_domain_count": 20}})
+    none_trackers = privacy_score({"cmp": {}, "resources": {"tracker_domain_count": 20}})
+    tcf = privacy_score({"cmp": {"tcf": True}, "resources": {}})
+    assert none_trackers == 10.0          # trackers, no consent mgmt
+    assert vendor_only == 40.0            # deployed CMP gets credit
+    assert tcf >= 50.0
+    assert tcf > vendor_only > none_trackers
 
 ADS_TXT = """\
 # sample ads.txt

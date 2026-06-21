@@ -99,7 +99,7 @@ Also captured: app-ads.txt presence/counts, robots.txt (sitemap, disallow count)
 
 ## 5. Privacy / consent  *(render)*
 
-**`privacy` (DERIVED, 0–100)** — presence of a recognized consent framework. `50·TCF + 30·GPP + 10·USP`; if none, 10 (with >10 trackers) or 20. Measures whether the publisher *implements* consent capture, **not** whether they honor it. Raw inputs: `cmp_tcf`, `cmp_gpp`, `cmp_usp`, `gpc`, `cookie_count`, `tracker_domain_count`.
+**`privacy` (DERIVED, 0–100)** — whether a consent-management platform is deployed. `50·TCF + 30·GPP + 10·USP`; if no live framework but a **CMP vendor is detected** (deployed but dormant — e.g. an EU TCF prompt that doesn't fire for our non-EU vantage point), 40; if none, 10 (>10 trackers) or 20. Detection uses the live API **and** the spec locator iframes (`__tcfapiLocator` etc.) **and** known vendor scripts (OneTrust, Sourcepoint, Google Funding Choices, Didomi, …) so region-gated CMPs aren't missed. Measures whether consent capture is *implemented*, **not** whether it's honored. Raw inputs: `cmp_present`, `cmp_vendor`, `cmp_tcf`, `cmp_gpp`, `cmp_usp`, `cmp_tcf_api_live`, `gpc`, `cookie_count`, `tracker_domain_count`.
 
 ## 6. Video / OLV  *(render; only when video present)*
 

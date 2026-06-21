@@ -76,8 +76,10 @@ FIELD_DEFS: dict[str, tuple[str, str]] = {
     "cpu_task_duration_s": ("Main-thread task time in seconds (CDP Performance).", "raw"),
     "dom_node_count": ("Total DOM elements.", "raw"),
     # consent
-    "cmp_tcf": ("IAB TCF consent API (__tcfapi) present.", "raw"),
-    "cmp_gpp": ("IAB Global Privacy Platform API (__gpp) present.", "raw"),
+    "cmp_present": ("A consent-management platform is deployed (live API, locator iframe, or known vendor).", "derived"),
+    "cmp_vendor": ("Detected CMP vendor (OneTrust, Sourcepoint, Google Funding Choices, ...).", "raw"),
+    "cmp_tcf": ("IAB TCF detected (__tcfapi or __tcfapiLocator iframe).", "raw"),
+    "cmp_gpp": ("IAB Global Privacy Platform detected (__gpp or __gppLocator).", "raw"),
     "gpc": ("Global Privacy Control signalled by the browser.", "raw"),
     "cookie_count": ("Total cookies set (CDP; includes HttpOnly).", "raw"),
     "third_party_cookie_count": ("Cookies whose domain != first party.", "raw"),

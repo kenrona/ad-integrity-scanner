@@ -153,11 +153,14 @@ def _privacy(render: dict[str, Any]) -> tuple[float, dict]:
         score += 30.0
     if cmp.get("usp"):
         score += 10.0
+    if score == 0.0 and cmp.get("vendor"):
+        score = 40.0          # CMP deployed (vendor detected) but API not active here
     if score == 0.0:
         score = 10.0 if trackers > 10 else 20.0          # trackers, no consent mgmt
     inputs = {"tcf": cmp.get("tcf"), "gpp": cmp.get("gpp"), "usp": cmp.get("usp"),
-              "gpc": cmp.get("gpc"), "cookie_count": cmp.get("cookie_count"),
-              "tracker_domain_count": trackers}
+              "tcf_api_live": cmp.get("tcf_api_live"), "cmp_vendor": cmp.get("vendor"),
+              "cmp_present": cmp.get("cmp_present"), "gpc": cmp.get("gpc"),
+              "cookie_count": cmp.get("cookie_count"), "tracker_domain_count": trackers}
     return _clamp(score), inputs
 
 
@@ -345,9 +348,12 @@ def _flatten_metrics(signals: dict[str, Any]) -> dict[str, Any]:
             "ad_request_count": res.get("ad_request_count"),
             "cpu_task_duration_s": cpu.get("task_duration_s"),
             # privacy
+            "cmp_present": cmp.get("cmp_present"),
+            "cmp_vendor": cmp.get("vendor"),
             "cmp_tcf": cmp.get("tcf"),
             "cmp_gpp": cmp.get("gpp"),
             "cmp_usp": cmp.get("usp"),
+            "cmp_tcf_api_live": cmp.get("tcf_api_live"),
             "gpc": cmp.get("gpc"),
             "cookie_count": cmp.get("cookie_count"),
             "third_party_cookie_count": cmp.get("third_party_cookie_count"),

@@ -50,6 +50,7 @@ _METRIC_COLS = [
     ("tracker_domain_count", "INTEGER"), ("cpu_task_duration_s", "DOUBLE"),
     ("dom_node_count", "INTEGER"),
     # consent
+    ("cmp_present", "BOOLEAN"), ("cmp_vendor", "VARCHAR"),
     ("cmp_tcf", "BOOLEAN"), ("cmp_gpp", "BOOLEAN"), ("gpc", "BOOLEAN"),
     ("cookie_count", "INTEGER"), ("third_party_cookie_count", "INTEGER"),
     # ad-tech / content

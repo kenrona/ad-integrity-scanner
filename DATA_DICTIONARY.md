@@ -75,8 +75,10 @@ These are the columns in the CSV/Parquet export, in order.
 | `tracker_domain_count` | INTEGER | raw | Third-party domains matching the tracker list. |
 | `cpu_task_duration_s` | DOUBLE | raw | Main-thread task time in seconds (CDP Performance). |
 | `dom_node_count` | INTEGER | raw | Total DOM elements. |
-| `cmp_tcf` | BOOLEAN | raw | IAB TCF consent API (__tcfapi) present. |
-| `cmp_gpp` | BOOLEAN | raw | IAB Global Privacy Platform API (__gpp) present. |
+| `cmp_present` | BOOLEAN | derived | A consent-management platform is deployed (live API, locator iframe, or known vendor). |
+| `cmp_vendor` | VARCHAR | raw | Detected CMP vendor (OneTrust, Sourcepoint, Google Funding Choices, ...). |
+| `cmp_tcf` | BOOLEAN | raw | IAB TCF detected (__tcfapi or __tcfapiLocator iframe). |
+| `cmp_gpp` | BOOLEAN | raw | IAB Global Privacy Platform detected (__gpp or __gppLocator). |
 | `gpc` | BOOLEAN | raw | Global Privacy Control signalled by the browser. |
 | `cookie_count` | INTEGER | raw | Total cookies set (CDP; includes HttpOnly). |
 | `third_party_cookie_count` | INTEGER | raw | Cookies whose domain != first party. |
