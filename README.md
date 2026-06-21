@@ -18,6 +18,9 @@ no paid vendor APIs.
 - **CDP-authoritative** page weight / requests / cookies / CPU; **embedding** content + brand-suitability classifier (model2vec, keyword fallback).
 - **Scales on one box** toward ~1M URLs/day: async endpoint, Postgres-backed queue, tiered-TTL dedup, maintenance reaper, Parquet/CSV analytics, and a browser GUI.
 
+📖 **Browse the docs as one HTML page:** [`docs/index.html`](./docs/index.html)
+(built from the markdown via `python -m app.docsite`).
+
 See [`PLAN.md`](./PLAN.md) for the full design and roadmap,
 [`DATA_DICTIONARY.md`](./DATA_DICTIONARY.md) for every field, and
 [`METRICS.md`](./METRICS.md) for the **metrics dictionary** — every metric with
