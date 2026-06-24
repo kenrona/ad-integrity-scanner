@@ -6,3 +6,8 @@ __pycache__/
 scan_results.csv
 .pytest_cache/
 .DS_Store
+
+# Data files (large source datasets, exports, Excel lock files) — never commit.
+*.csv
+*.xlsx
+~$*
