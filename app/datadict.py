@@ -66,6 +66,11 @@ FIELD_DEFS: dict[str, tuple[str, str]] = {
     "ad_refreshing": ("Whether any slot re-rendered during the dwell.", "raw"),
     "min_refresh_seconds": ("Shortest observed refresh interval (s).", "raw"),
     "ad_cls_share": ("Fraction of total CLS attributable to ad nodes.", "derived"),
+    "ad_load_avg_ms": ("Mean ad load time (ms from navigation start) across detected ads.", "derived"),
+    "ad_load_median_ms": ("Median ad load time (ms from navigation start).", "derived"),
+    "ad_load_max_ms": ("Slowest ad load time (ms from navigation start).", "derived"),
+    "ad_load_samples": ("# ads contributing a load time (GPT slot renders, else ad-host resource timings).", "raw"),
+    "ad_load_source": ("Timing source for ad load speed: 'gpt_slot_render' or 'ad_host_resource_timing'.", "raw"),
     # performance / footprint
     "lcp_ms": ("Largest Contentful Paint (ms, lab).", "raw"),
     "cls": ("Cumulative Layout Shift (lab; median-of-N when AI_RENDER_SAMPLES>1).", "raw"),

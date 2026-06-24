@@ -67,6 +67,11 @@ These are the columns in the CSV/Parquet export, in order.
 | `ad_refreshing` | BOOLEAN | raw | Whether any slot re-rendered during the dwell. |
 | `min_refresh_seconds` | DOUBLE | raw | Shortest observed refresh interval (s). |
 | `ad_cls_share` | DOUBLE | derived | Fraction of total CLS attributable to ad nodes. |
+| `ad_load_avg_ms` | INTEGER | derived | Mean ad load time (ms from navigation start) across detected ads. |
+| `ad_load_median_ms` | INTEGER | derived | Median ad load time (ms from navigation start). |
+| `ad_load_max_ms` | INTEGER | derived | Slowest ad load time (ms from navigation start). |
+| `ad_load_samples` | INTEGER | raw | # ads contributing a load time (GPT slot renders, else ad-host resource timings). |
+| `ad_load_source` | VARCHAR | raw | Timing source for ad load speed: 'gpt_slot_render' or 'ad_host_resource_timing'. |
 | `lcp_ms` | INTEGER | raw | Largest Contentful Paint (ms, lab). |
 | `cls` | DOUBLE | raw | Cumulative Layout Shift (lab; median-of-N when AI_RENDER_SAMPLES>1). |
 | `inp_ms` | INTEGER | derived | Synthetic INP proxy from a scripted interaction (lab, not field RUM). |

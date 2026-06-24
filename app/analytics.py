@@ -44,6 +44,9 @@ _METRIC_COLS = [
     ("first_screen_whitespace", "DOUBLE"), ("first_ad_offset_px", "INTEGER"),
     ("ad_gap_median_px", "INTEGER"), ("ad_refreshing", "BOOLEAN"),
     ("min_refresh_seconds", "DOUBLE"), ("ad_cls_share", "DOUBLE"),
+    ("ad_load_avg_ms", "INTEGER"), ("ad_load_median_ms", "INTEGER"),
+    ("ad_load_max_ms", "INTEGER"), ("ad_load_samples", "INTEGER"),
+    ("ad_load_source", "VARCHAR"),
     # performance / footprint (bytes/requests/cpu are CDP-authoritative)
     ("lcp_ms", "INTEGER"), ("cls", "DOUBLE"), ("inp_ms", "INTEGER"),
     ("page_weight_bytes", "BIGINT"),

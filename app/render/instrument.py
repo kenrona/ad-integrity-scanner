@@ -287,6 +287,39 @@ COLLECT_JS = r"""
     };
   } catch (e) { out.gpt = { present: false, error: String(e) }; }
 
+  // ---- Ad load speed ----
+  // How long each ad took to load, in ms from navigation start (performance.now
+  // is relative to the navigation time origin).
+  //   * GPT: first `slotRenderEnded` timestamp per slot (when the creative rendered).
+  //   * Fallback (non-GPT inventory): Resource Timing `responseEnd` for ad-host
+  //     requests (the iframe/creative finished downloading).
+  // Lab timing: below-the-fold lazy-loaded ads render only after the scroll, so
+  // their times legitimately run longer.
+  try {
+    const adHostRe = /(googlesyndication|doubleclick|amazon-adsystem|adnxs|criteo|rubiconproject|pubmatic|adsrvr|3lift|sharethrough|smartadserver|teads|adform|openx|casalemedia|33across)/i;
+    let times = [], source = null;
+    const gptR = (window.__ai && window.__ai.slotRenders) || {};
+    for (const id in gptR) { const ts = gptR[id]; if (ts && ts.length) times.push(ts[0]); }
+    if (times.length) source = 'gpt_slot_render';
+    else {
+      (performance.getEntriesByType('resource') || []).forEach(r => {
+        try {
+          if (adHostRe.test(new URL(r.name, location.href).hostname) && r.responseEnd > 0)
+            times.push(r.responseEnd);
+        } catch (e) {}
+      });
+      if (times.length) source = 'ad_host_resource_timing';
+    }
+    times = times.map(t => Math.round(t));
+    out.ad_load = {
+      sample_count: times.length,
+      source: source,
+      avg_ms: times.length ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : null,
+      median_ms: med(times),
+      max_ms: times.length ? Math.max(...times) : null,
+    };
+  } catch (e) { out.ad_load = { sample_count: 0 }; }
+
   // Ad-attributable CLS: shift values whose source nodes sit within an ad element.
   try {
     const shifts = (window.__ai && window.__ai.shifts) || [];

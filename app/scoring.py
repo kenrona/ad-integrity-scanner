@@ -352,6 +352,12 @@ def _flatten_metrics(signals: dict[str, Any]) -> dict[str, Any]:
             "ad_refreshing": gpt.get("refreshing"),
             "ad_refresh_events": gpt.get("refresh_events"),
             "min_refresh_seconds": gpt.get("min_refresh_seconds"),
+            # ad load speed (informational; ms from navigation start)
+            "ad_load_avg_ms": (render.get("ad_load") or {}).get("avg_ms"),
+            "ad_load_median_ms": (render.get("ad_load") or {}).get("median_ms"),
+            "ad_load_max_ms": (render.get("ad_load") or {}).get("max_ms"),
+            "ad_load_samples": (render.get("ad_load") or {}).get("sample_count"),
+            "ad_load_source": (render.get("ad_load") or {}).get("source"),
             "first_screen_whitespace": layout.get("first_screen_whitespace"),
             "dom_node_count": layout.get("dom_node_count"),
             # ad-tech + SupplyChain (schain) validation vs ads.txt

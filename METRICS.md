@@ -78,6 +78,8 @@ Also captured: app-ads.txt presence/counts, robots.txt (sitemap, disallow count)
 | `sticky_ad_count` | RAW | slots with CSS position fixed/sticky (anchored ads) |
 | `ad_refreshing` / `ad_refresh_events` / `min_refresh_seconds` | RAW | observed slot re-renders during the dwell + shortest interval seen |
 | `total_ad_area_px` / `page_area_px` | RAW | summed ad pixel area; full scroll-height page area |
+| `ad_load_avg_ms` / `ad_load_median_ms` / `ad_load_max_ms` | DERIVED | **ad load speed** — time (ms, from navigation start) until each ad rendered, aggregated. Source: GPT `slotRenderEnded` first-render timestamp per slot; for non-GPT inventory, ad-host **Resource Timing** `responseEnd` (`ad_load_source` records which). Lab timing — below-fold lazy-loaded ads render only after the auto-scroll, so they legitimately run longer. Informational (not yet folded into a score). Inputs: per-slot render timestamps / ad-host resource timings |
+| `ad_load_samples` | RAW | # ads that contributed a load time |
 
 ## 3. MFA / ad-load risk  *(render; static proxy fallback)*
 

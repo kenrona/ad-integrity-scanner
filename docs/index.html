@@ -430,6 +430,16 @@ Weighted average of available components (renormalized so the sellers.json terms
 <td>RAW</td>
 <td>summed ad pixel area; full scroll-height page area</td>
 </tr>
+<tr>
+<td><code>ad_load_avg_ms</code> / <code>ad_load_median_ms</code> / <code>ad_load_max_ms</code></td>
+<td>DERIVED</td>
+<td><strong>ad load speed</strong> — time (ms, from navigation start) until each ad rendered, aggregated. Source: GPT <code>slotRenderEnded</code> first-render timestamp per slot; for non-GPT inventory, ad-host <strong>Resource Timing</strong> <code>responseEnd</code> (<code>ad_load_source</code> records which). Lab timing — below-fold lazy-loaded ads render only after the auto-scroll, so they legitimately run longer. Informational (not yet folded into a score). Inputs: per-slot render timestamps / ad-host resource timings</td>
+</tr>
+<tr>
+<td><code>ad_load_samples</code></td>
+<td>RAW</td>
+<td># ads that contributed a load time</td>
+</tr>
 </tbody>
 </table>
 <h2 id="3-mfa-ad-load-risk-render-static-proxy-fallback">3. MFA / ad-load risk  <em>(render; static proxy fallback)</em></h2>
@@ -848,6 +858,36 @@ Weighted average of available components (renormalized so the sellers.json terms
 <td>DOUBLE</td>
 <td>derived</td>
 <td>Fraction of total CLS attributable to ad nodes.</td>
+</tr>
+<tr>
+<td><code>ad_load_avg_ms</code></td>
+<td>INTEGER</td>
+<td>derived</td>
+<td>Mean ad load time (ms from navigation start) across detected ads.</td>
+</tr>
+<tr>
+<td><code>ad_load_median_ms</code></td>
+<td>INTEGER</td>
+<td>derived</td>
+<td>Median ad load time (ms from navigation start).</td>
+</tr>
+<tr>
+<td><code>ad_load_max_ms</code></td>
+<td>INTEGER</td>
+<td>derived</td>
+<td>Slowest ad load time (ms from navigation start).</td>
+</tr>
+<tr>
+<td><code>ad_load_samples</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td># ads contributing a load time (GPT slot renders, else ad-host resource timings).</td>
+</tr>
+<tr>
+<td><code>ad_load_source</code></td>
+<td>VARCHAR</td>
+<td>raw</td>
+<td>Timing source for ad load speed: 'gpt_slot_render' or 'ad_host_resource_timing'.</td>
 </tr>
 <tr>
 <td><code>lcp_ms</code></td>
