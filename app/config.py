@@ -30,6 +30,12 @@ class Settings(BaseSettings):
 
     strip_tracking_params: bool = True
 
+    # Baseline datasets are meant to represent content pages, so home pages
+    # (root-path URLs like https://example.com/) are dropped at ingest — they are
+    # aggregate/landing pages that skew page-level benchmarks. Applies to
+    # kind='baseline' only; publisher datasets keep every row.
+    baseline_drop_home_pages: bool = True
+
     # SSRF allowlist (comma-separated hosts) — permits otherwise-blocked hosts
     # such as 127.0.0.1 for the local accuracy test-suite. Empty in production.
     ssrf_allow_hosts: str = ""
@@ -55,9 +61,21 @@ class Settings(BaseSettings):
     # also get a render. Default 1.0 for local dev; production would use ~0.05-0.1.
     render_enabled: bool = True
     render_sample_rate: float = 1.0
-    render_concurrency: int = 6   # parallel browser contexts (tuned for M4/10-core/32GB)
+    render_concurrency: int = 6   # TOTAL parallel browser contexts across all browsers
+    # Number of separate Chromium processes the render pool launches. Contexts are
+    # spread across them (least-loaded), so each browser serves ~concurrency/browsers
+    # contexts. One browser bottlenecks on a single CDP connection beyond ~4 contexts
+    # (request interception funnels through it); more browser processes give real
+    # parallelism. Scale this up with render_concurrency on bigger/cloud hardware.
+    render_browsers: int = 1
     render_dwell_ms: int = 8000   # longer dwell improves refresh + viewability capture
     render_samples: int = 1       # >1 = render N times, take median CLS (N× cost)
+    # page.goto cap: slow-first-byte sites fail fast instead of holding a slot.
+    render_nav_timeout_ms: int = 15000
+    # Hard cap on a single render job (goto+dwell+collect). A render exceeding this
+    # is cancelled — the browser context is closed and the concurrency slot freed —
+    # so one wedged page can't starve the pool. Caught as a job failure (requeued).
+    render_timeout_seconds: int = 30
     # Resource types aborted during render. Default keeps images (accurate page
     # weight); add 'image' to cut bandwidth at the cost of weight accuracy.
     render_block_resources: str = "font,media"
@@ -69,6 +87,13 @@ class Settings(BaseSettings):
     maintenance_interval_seconds: int = 60
     rescan_enabled: bool = False             # re-enqueue URLs whose page TTL expired
     rescan_batch: int = 100
+
+    # Datasets / ingestion / scan-batch / benchmark.
+    ingest_batch_size: int = 500            # dataset_rows inserted per executemany batch
+    scan_batch_throttle_ms: int = 50        # default delay between submit_scan calls in a dataset scan
+    scan_batch_concurrency: int = 1         # parallel submit_scan calls per dataset scan (1 = sequential)
+    benchmark_refresh_concurrently: bool = True  # use REFRESH MATERIALIZED VIEW CONCURRENTLY when populated
+    dataset_rows_page_size: int = 200       # default page size for GET /datasets/{id}/rows
 
     log_level: str = "INFO"
 

@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ad Integrity Scanner — Profile</title>
+<style>
+  :root { --bg:#0f1320; --card:#1a2032; --ink:#e7ecf5; --mut:#8a97b3; --acc:#5b8cff;
+          --ok:#3ecf8e; --warn:#e0b341; --err:#ff6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         background:var(--bg); color:var(--ink); }
+  .wrap { max-width:980px; margin:0 auto; padding:28px 20px 60px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  h2 { font-size:15px; margin:0 0 10px; }
+  .sub { color:var(--mut); margin:0 0 22px; }
+  nav { display:flex; gap:16px; margin-bottom:22px; font-size:13px; }
+  nav a { color:var(--mut); text-decoration:none; padding:4px 0; border-bottom:2px solid transparent; }
+  nav a:hover { color:var(--ink); }
+  nav a.active { color:var(--ink); border-bottom-color:var(--acc); }
+  .card { background:var(--card); border:1px solid #283150; border-radius:12px;
+          padding:18px; margin-bottom:18px; }
+  label { display:block; color:var(--mut); font-size:12px; margin-bottom:6px; }
+  select { background:#0d1120; border:1px solid #2d3756; color:var(--ink);
+           border-radius:8px; padding:9px 11px; width:100%; }
+  .row { display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end; }
+  table { width:100%; border-collapse:collapse; margin-top:8px; font-size:13px; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid #232b46; white-space:nowrap; }
+  th { color:var(--mut); font-weight:600; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .muted { color:var(--mut); font-size:12px; }
+  .stats { display:flex; gap:22px; flex-wrap:wrap; }
+  .stat b { font-size:18px; }
+  .stat span { color:var(--mut); font-size:12px; display:block; }
+  .chart { margin:6px 0 18px; }
+  .chartgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:14px; }
+  .chartbox h2 { font-size:13px; color:var(--mut); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a href="/">Submit</a>
+    <a href="/sources">Sources</a>
+    <a href="/profile" class="active">Profile</a>
+    <a href="/dashboard">Dashboard</a>
+  </nav>
+  <h1>Data Profiling</h1>
+  <p class="sub">Per-metric statistics and distributions over a dataset's latest scan metrics.</p>
+
+  <div class="card">
+    <div class="row">
+      <div style="flex:1">
+        <label>Dataset</label>
+        <select id="ds"><option value="">loading…</option></select>
+      </div>
+    </div>
+    <div class="muted" id="summary" style="margin-top:12px"></div>
+  </div>
+
+  <div class="card" id="numcard" style="display:none">
+    <h2>Numeric metrics</h2>
+    <table>
+      <thead><tr>
+        <th>metric</th><th>count</th><th>null%</th><th>min</th><th>p25</th>
+        <th>median</th><th>mean</th><th>p75</th><th>max</th><th>distinct</th>
+      </tr></thead>
+      <tbody id="numrows"></tbody>
+    </table>
+  </div>
+
+  <div class="card" id="histcard" style="display:none">
+    <h2>Integrity score distribution</h2>
+    <div class="chart" id="hist"></div>
+  </div>
+
+  <div class="card" id="catcard" style="display:none">
+    <h2>Categorical distributions</h2>
+    <div class="chartgrid" id="catgrid"></div>
+  </div>
+</div>
+
+<script src="/static/progress.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+
+function qsParam(k) { return new URLSearchParams(location.search).get(k); }
+function n(v) { return (v === null || v === undefined) ? '' : v; }
+
+async function loadDatasets() {
+  const sel = $('ds');
+  try {
+    const ds = await (await fetch('/datasets')).json();
+    sel.innerHTML = '<option value="">— pick a dataset —</option>';
+    for (const d of ds) {
+      const o = document.createElement('option');
+      o.value = d.id;
+      o.textContent = `${d.name} (${d.kind}, ${d.scanned_count}/${d.row_count} scanned)`;
+      sel.appendChild(o);
+    }
+    const pre = qsParam('dataset_id');
+    if (pre) { sel.value = pre; if (sel.value) loadProfile(pre); }
+  } catch (e) {
+    sel.innerHTML = '<option value="">backend unreachable</option>';
+  }
+}
+
+async function loadProfile(id) {
+  $('summary').textContent = 'profiling…';
+  $('numcard').style.display = 'none';
+  $('histcard').style.display = 'none';
+  $('catcard').style.display = 'none';
+  try {
+    const p = await (await fetch('/datasets/' + id + '/profile')).json();
+    $('summary').innerHTML =
+      `<span class="stats"><span class="stat"><b>${p.row_count}</b><span>rows</span></span>` +
+      `<span class="stat"><b>${p.scanned_count}</b><span>scanned</span></span></span>`;
+
+    // numeric
+    const tb = $('numrows'); tb.innerHTML = '';
+    for (const m of (p.numeric || [])) {
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        `<td>${m.metric}</td>` +
+        `<td class="num">${m.count}</td>` +
+        `<td class="num">${m.null_pct == null ? '' : m.null_pct.toFixed(1)}</td>` +
+        `<td class="num">${fmtNum(m.min)}</td>` +
+        `<td class="num">${fmtNum(m.p25)}</td>` +
+        `<td class="num">${fmtNum(m.median)}</td>` +
+        `<td class="num">${fmtNum(m.mean)}</td>` +
+        `<td class="num">${fmtNum(m.p75)}</td>` +
+        `<td class="num">${fmtNum(m.max)}</td>` +
+        `<td class="num">${m.distinct}</td>`;
+      tb.appendChild(tr);
+    }
+    $('numcard').style.display = (p.numeric && p.numeric.length) ? '' : 'none';
+
+    // integrity histogram
+    if (p.integrity_histogram && p.integrity_histogram.length) {
+      svgHistogram($('hist'), { buckets: p.integrity_histogram, color: getComputedStyle(document.documentElement).getPropertyValue('--ok') });
+      $('histcard').style.display = '';
+    }
+
+    // categorical
+    const grid = $('catgrid'); grid.innerHTML = '';
+    const cats = (p.categorical || []).filter(c => c.distribution && c.distribution.length);
+    for (const c of cats) {
+      const box = document.createElement('div');
+      box.className = 'chartbox';
+      const h = document.createElement('h2'); h.textContent = c.metric; box.appendChild(h);
+      const chart = document.createElement('div'); box.appendChild(chart);
+      grid.appendChild(box);
+      svgBarChart(chart, {
+        labels: c.distribution.map(d => d.value === null ? '(null)' : d.value),
+        values: c.distribution.map(d => d.n)
+      });
+    }
+    $('catcard').style.display = cats.length ? '' : 'none';
+  } catch (e) {
+    $('summary').textContent = 'profile failed: ' + e.message;
+  }
+}
+
+function fmtNum(v) {
+  if (v === null || v === undefined) return '';
+  if (Math.abs(v) >= 1000 || (v !== 0 && Math.abs(v) < 0.01)) return Number(v).toPrecision(3);
+  return (Math.round(v * 100) / 100).toString();
+}
+
+$('ds').addEventListener('change', e => { if (e.target.value) loadProfile(e.target.value); });
+loadDatasets();
+</script>
+</body>
+</html>

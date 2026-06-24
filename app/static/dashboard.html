@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ad Integrity Scanner — Dashboard</title>
+<style>
+  :root { --bg:#0f1320; --card:#1a2032; --ink:#e7ecf5; --mut:#8a97b3; --acc:#5b8cff;
+          --ok:#3ecf8e; --warn:#e0b341; --err:#ff6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         background:var(--bg); color:var(--ink); }
+  .wrap { max-width:980px; margin:0 auto; padding:28px 20px 60px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  h2 { font-size:15px; margin:0 0 10px; }
+  .sub { color:var(--mut); margin:0 0 22px; }
+  nav { display:flex; gap:16px; margin-bottom:22px; font-size:13px; }
+  nav a { color:var(--mut); text-decoration:none; padding:4px 0; border-bottom:2px solid transparent; }
+  nav a:hover { color:var(--ink); }
+  nav a.active { color:var(--ink); border-bottom-color:var(--acc); }
+  .card { background:var(--card); border:1px solid #283150; border-radius:12px;
+          padding:18px; margin-bottom:18px; }
+  label { display:block; color:var(--mut); font-size:12px; margin-bottom:6px; }
+  input[type=text], select { background:#0d1120; border:1px solid #2d3756; color:var(--ink);
+           border-radius:8px; padding:9px 11px; width:100%; }
+  .row { display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end; }
+  .row > div { flex:1; min-width:150px; }
+  button { background:var(--acc); color:#fff; border:0; border-radius:8px;
+           padding:10px 18px; font-weight:600; cursor:pointer; }
+  button.ghost { background:#2a3354; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .bar { height:10px; background:#0d1120; border-radius:6px; overflow:hidden; margin:14px 0 6px; }
+  .bar > i { display:block; height:100%; width:0; background:var(--acc); transition:width .2s; }
+  table { width:100%; border-collapse:collapse; margin-top:8px; font-size:13px; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid #232b46; white-space:nowrap; }
+  th { color:var(--mut); font-weight:600; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .up { color:var(--ok); } .down { color:var(--err); }
+  .muted { color:var(--mut); font-size:12px; }
+  .chart { margin:6px 0 12px; }
+  .twocol { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .twocol h2 { font-size:13px; color:var(--mut); }
+  @media(max-width:680px){ .twocol { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a href="/">Submit</a>
+    <a href="/sources">Sources</a>
+    <a href="/profile">Profile</a>
+    <a href="/dashboard" class="active">Dashboard</a>
+  </nav>
+  <h1>Benchmark Dashboard</h1>
+  <p class="sub">Compare a publisher dataset against the baseline. Refresh the benchmark matview after new scans complete.</p>
+
+  <div class="card">
+    <div class="row">
+      <div style="flex:2">
+        <label>Publisher dataset</label>
+        <select id="pub"><option value="">loading…</option></select>
+      </div>
+      <div style="flex:0 0 200px">
+        <label>Baseline name</label>
+        <input type="text" id="baseline" value="baseline">
+      </div>
+      <div style="flex:0 0 auto">
+        <button id="refresh" class="ghost">Refresh benchmark</button>
+      </div>
+    </div>
+    <div class="bar"><i id="prog"></i></div>
+    <div class="muted" id="msg"></div>
+  </div>
+
+  <div class="card" id="meancard" style="display:none">
+    <h2>Mean per metric: baseline vs publisher</h2>
+    <div class="chart" id="meanchart"></div>
+  </div>
+
+  <div class="card" id="deltacard" style="display:none">
+    <h2>Delta table</h2>
+    <table>
+      <thead><tr>
+        <th>metric</th><th>baseline mean</th><th>publisher mean</th>
+        <th>Δ mean</th><th>% of baseline</th>
+      </tr></thead>
+      <tbody id="deltarows"></tbody>
+    </table>
+  </div>
+
+  <div class="card" id="distcard" style="display:none">
+    <h2>Integrity score distribution</h2>
+    <div class="twocol">
+      <div><h2>baseline</h2><div class="chart" id="histb"></div></div>
+      <div><h2>publisher</h2><div class="chart" id="histp"></div></div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/progress.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+
+async function loadPublishers() {
+  const sel = $('pub');
+  try {
+    const ds = await (await fetch('/datasets')).json();
+    const pubs = ds.filter(d => d.kind === 'publisher');
+    sel.innerHTML = '<option value="">— pick a publisher —</option>';
+    for (const d of pubs) {
+      const o = document.createElement('option');
+      o.value = d.id;
+      o.textContent = `${d.name} (${d.scanned_count}/${d.row_count} scanned)`;
+      sel.appendChild(o);
+    }
+    if (!pubs.length) sel.innerHTML = '<option value="">no publisher datasets</option>';
+  } catch (e) {
+    sel.innerHTML = '<option value="">backend unreachable</option>';
+  }
+}
+
+function fmtNum(v) {
+  if (v === null || v === undefined) return '';
+  if (Math.abs(v) >= 1000 || (v !== 0 && Math.abs(v) < 0.01)) return Number(v).toPrecision(3);
+  return (Math.round(v * 100) / 100).toString();
+}
+
+async function loadBenchmark() {
+  const id = $('pub').value;
+  if (!id) return;
+  const name = $('baseline').value.trim() || 'baseline';
+  $('msg').textContent = 'loading benchmark…';
+  $('meancard').style.display = 'none';
+  $('deltacard').style.display = 'none';
+  $('distcard').style.display = 'none';
+  try {
+    const r = await fetch('/benchmark?publisher_dataset_id=' + id + '&baseline_name=' + encodeURIComponent(name));
+    if (!r.ok) {
+      const t = await r.text();
+      $('msg').textContent = 'benchmark failed (' + r.status + '): ' + t.slice(0, 200);
+      return;
+    }
+    const b = await r.json();
+    $('msg').textContent = `${b.publisher.name} vs ${b.baseline.name} — ${b.metrics.length} metrics`;
+
+    const metrics = b.metrics || [];
+    // grouped means chart
+    svgGroupedBars($('meanchart'), {
+      labels: metrics.map(m => m.metric),
+      seriesA: metrics.map(m => m.baseline_mean),
+      seriesB: metrics.map(m => m.publisher_mean),
+      labelA: b.baseline.name,
+      labelB: b.publisher.name
+    });
+    $('meancard').style.display = metrics.length ? '' : 'none';
+
+    // delta table
+    const tb = $('deltarows'); tb.innerHTML = '';
+    for (const m of metrics) {
+      const dcls = (m.delta_mean == null) ? '' : (m.delta_mean >= 0 ? 'up' : 'down');
+      const darrow = (m.delta_mean == null) ? '' : (m.delta_mean >= 0 ? '▲ ' : '▼ ');
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        `<td>${m.metric}</td>` +
+        `<td class="num">${fmtNum(m.baseline_mean)}</td>` +
+        `<td class="num">${fmtNum(m.publisher_mean)}</td>` +
+        `<td class="num ${dcls}">${m.delta_mean == null ? '' : darrow + fmtNum(m.delta_mean)}</td>` +
+        `<td class="num">${m.pct_of_baseline == null ? '' : fmtNum(m.pct_of_baseline) + '%'}</td>`;
+      tb.appendChild(tr);
+    }
+    $('deltacard').style.display = metrics.length ? '' : 'none';
+
+    // integrity distributions
+    const dist = (b.distributions && b.distributions.integrity_score) || {};
+    if ((dist.baseline && dist.baseline.length) || (dist.publisher && dist.publisher.length)) {
+      svgHistogram($('histb'), { buckets: dist.baseline || [], color: getComputedStyle(document.documentElement).getPropertyValue('--acc') });
+      svgHistogram($('histp'), { buckets: dist.publisher || [], color: getComputedStyle(document.documentElement).getPropertyValue('--ok') });
+      $('distcard').style.display = '';
+    }
+  } catch (e) {
+    $('msg').textContent = 'error: ' + e.message;
+  }
+}
+
+$('refresh').addEventListener('click', async () => {
+  $('refresh').disabled = true;
+  $('msg').textContent = 'refreshing matview…';
+  fillBar($('prog'), 0, 1);
+  try {
+    const r = await fetch('/benchmark/refresh', { method: 'POST' });
+    if (!r.ok) { $('msg').textContent = 'refresh failed: ' + r.status; $('refresh').disabled = false; return; }
+    const { job_id } = await r.json();
+    pollJob(job_id, {
+      onProgress: job => { fillBar($('prog'), job.done, job.total || 1); },
+      onDone: () => {
+        fillBar($('prog'), 1, 1);
+        $('refresh').disabled = false;
+        $('msg').textContent = 'refreshed';
+        if ($('pub').value) loadBenchmark();
+      },
+      onError: job => { $('refresh').disabled = false; $('msg').textContent = 'refresh error: ' + (job.error || 'unknown'); }
+    });
+  } catch (e) {
+    $('refresh').disabled = false;
+    $('msg').textContent = 'error: ' + e.message;
+  }
+});
+
+$('pub').addEventListener('change', () => { if ($('pub').value) loadBenchmark(); });
+loadPublishers();
+</script>
+</body>
+</html>

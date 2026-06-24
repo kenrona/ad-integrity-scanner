@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ad Integrity Scanner — Sources</title>
+<style>
+  :root { --bg:#0f1320; --card:#1a2032; --ink:#e7ecf5; --mut:#8a97b3; --acc:#5b8cff;
+          --ok:#3ecf8e; --warn:#e0b341; --err:#ff6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         background:var(--bg); color:var(--ink); }
+  .wrap { max-width:880px; margin:0 auto; padding:28px 20px 60px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:var(--mut); margin:0 0 22px; }
+  nav { display:flex; gap:16px; margin-bottom:22px; font-size:13px; }
+  nav a { color:var(--mut); text-decoration:none; padding:4px 0; border-bottom:2px solid transparent; }
+  nav a:hover { color:var(--ink); }
+  nav a.active { color:var(--ink); border-bottom-color:var(--acc); }
+  .card { background:var(--card); border:1px solid #283150; border-radius:12px;
+          padding:18px; margin-bottom:18px; }
+  label { display:block; color:var(--mut); font-size:12px; margin-bottom:6px; }
+  input[type=file], input[type=number], input[type=text], select {
+    background:#0d1120; border:1px solid #2d3756; color:var(--ink);
+    border-radius:8px; padding:9px 11px; width:100%; }
+  .row { display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end; }
+  .row > div { flex:1; min-width:150px; }
+  button { background:var(--acc); color:#fff; border:0; border-radius:8px;
+           padding:10px 18px; font-weight:600; cursor:pointer; }
+  button.ghost { background:#2a3354; }
+  button.small { padding:5px 12px; font-size:12px; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .bar { height:10px; background:#0d1120; border-radius:6px; overflow:hidden; margin:14px 0 6px; }
+  .bar > i { display:block; height:100%; width:0; background:var(--acc); transition:width .2s; }
+  .counts { display:flex; gap:18px; flex-wrap:wrap; color:var(--mut); font-size:13px; }
+  .counts b { color:var(--ink); }
+  table { width:100%; border-collapse:collapse; margin-top:8px; font-size:13px; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid #232b46;
+           white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:320px; }
+  th { color:var(--mut); font-weight:600; }
+  .pill { padding:2px 9px; border-radius:20px; font-size:12px; font-weight:600; }
+  .s-baseline { background:#1d3b30; color:var(--ok); }
+  .s-publisher { background:#22305a; color:#9db8ff; }
+  .stats { display:flex; gap:22px; flex-wrap:wrap; }
+  .stat b { font-size:18px; }
+  .stat span { color:var(--mut); font-size:12px; display:block; }
+  .muted { color:var(--mut); font-size:12px; }
+  a.link { color:var(--acc); text-decoration:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a href="/">Submit</a>
+    <a href="/sources" class="active">Sources</a>
+    <a href="/profile">Profile</a>
+    <a href="/dashboard">Dashboard</a>
+  </nav>
+  <h1>Data Sources</h1>
+  <p class="sub">Load URLs from a <code>.txt</code> / <code>.csv</code> / <code>.xlsx</code> file into a labeled dataset, then trigger scans.</p>
+
+  <div class="card">
+    <label>Load a source</label>
+    <div class="row">
+      <div style="flex:2">
+        <label>Source file (.txt / .csv / .xlsx)</label>
+        <input type="file" id="file" accept=".txt,.csv,.xlsx">
+      </div>
+      <div>
+        <label>Dataset name</label>
+        <input type="text" id="name" placeholder="baseline or acme_news">
+      </div>
+      <div style="flex:0 0 150px">
+        <label>Kind</label>
+        <select id="kind">
+          <option value="baseline">baseline</option>
+          <option value="publisher">publisher</option>
+        </select>
+      </div>
+      <div style="flex:0 0 160px">
+        <label>URL column (optional)</label>
+        <input type="text" id="urlcol" placeholder="auto-detect">
+      </div>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <div style="flex:0 0 auto">
+        <button id="go">Upload &amp; Load</button>
+      </div>
+      <div class="muted" id="loadmsg"></div>
+    </div>
+    <div class="bar"><i id="prog"></i></div>
+    <div class="counts">
+      <span id="loadcounts" class="muted"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <label>Datasets</label>
+    <div class="row" style="margin-bottom:10px">
+      <div style="flex:0 0 160px">
+        <label>Scan sample (%)</label>
+        <input type="number" id="samplepct" value="10" min="0.1" max="100" step="0.1">
+      </div>
+      <div class="muted" style="align-self:flex-end">Each dataset's <b>Scan</b> button enqueues this % of its rows (deterministic by URL).</div>
+    </div>
+    <div class="bar"><i id="scanprog"></i></div>
+    <div class="muted" id="scanmsg"></div>
+    <table>
+      <thead><tr><th>name</th><th>kind</th><th>rows</th><th>scanned</th><th>created</th><th>actions</th></tr></thead>
+      <tbody id="dsrows"><tr><td colspan="6" class="muted">loading…</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <label>Backend queue (live)</label>
+    <div class="stats" id="stats"><span class="muted">loading…</span></div>
+  </div>
+</div>
+
+<script src="/static/progress.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+
+function fmtDate(s) {
+  if (!s) return '';
+  try { return new Date(s).toISOString().slice(0, 16).replace('T', ' '); } catch (e) { return s; }
+}
+
+async function loadDatasets() {
+  try {
+    const ds = await (await fetch('/datasets')).json();
+    const tb = $('dsrows');
+    if (!ds.length) { tb.innerHTML = '<tr><td colspan="6" class="muted">no datasets yet</td></tr>'; return; }
+    tb.innerHTML = '';
+    for (const d of ds) {
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        `<td title="${d.name}">${d.name}</td>` +
+        `<td><span class="pill s-${d.kind}">${d.kind}</span></td>` +
+        `<td>${d.row_count}</td>` +
+        `<td>${d.scanned_count}</td>` +
+        `<td class="muted">${fmtDate(d.created_at)}</td>` +
+        `<td><button class="ghost small" data-scan="${d.id}">Scan</button> ` +
+        `<a class="link" href="/profile?dataset_id=${d.id}">Profile</a></td>`;
+      tb.appendChild(tr);
+    }
+    tb.querySelectorAll('button[data-scan]').forEach(b => {
+      b.addEventListener('click', () => scanDataset(parseInt(b.getAttribute('data-scan'))));
+    });
+  } catch (e) {
+    $('dsrows').innerHTML = '<tr><td colspan="6" class="muted">backend unreachable</td></tr>';
+  }
+}
+
+$('go').addEventListener('click', async () => {
+  const f = $('file').files[0];
+  const name = $('name').value.trim();
+  if (!f) { $('loadmsg').textContent = 'pick a file first'; return; }
+  if (!name) { $('loadmsg').textContent = 'enter a dataset name'; return; }
+  const fd = new FormData();
+  fd.append('file', f);
+  fd.append('name', name);
+  fd.append('kind', $('kind').value);
+  const uc = $('urlcol').value.trim();
+  if (uc) fd.append('url_column', uc);
+  $('go').disabled = true;
+  $('loadmsg').textContent = 'uploading…';
+  fillBar($('prog'), 0, 1);
+  try {
+    const r = await fetch('/datasets/load', { method: 'POST', body: fd });
+    if (!r.ok) { $('loadmsg').textContent = 'load failed: ' + r.status; $('go').disabled = false; return; }
+    const { job_id } = await r.json();
+    $('loadmsg').textContent = 'ingesting…';
+    pollJob(job_id, {
+      onProgress: job => {
+        fillBar($('prog'), job.done, job.total);
+        $('loadcounts').textContent = `${job.done}/${job.total} rows` + (job.message ? ' — ' + job.message : '');
+      },
+      onDone: job => {
+        fillBar($('prog'), job.total || 1, job.total || 1);
+        $('loadmsg').textContent = 'loaded';
+        $('loadcounts').textContent = job.message || `${job.done} rows`;
+        $('go').disabled = false;
+        loadDatasets();
+      },
+      onError: job => {
+        $('loadmsg').textContent = 'error: ' + (job.error || 'unknown');
+        $('go').disabled = false;
+      }
+    });
+  } catch (e) {
+    $('loadmsg').textContent = 'error: ' + e.message;
+    $('go').disabled = false;
+  }
+});
+
+async function scanDataset(id) {
+  const pct = Math.min(100, Math.max(0.1, parseFloat($('samplepct').value) || 100));
+  const sample_rate = pct / 100;
+  $('scanmsg').textContent = `starting scan (${pct}% sample)…`;
+  fillBar($('scanprog'), 0, 1);
+  try {
+    const r = await fetch('/datasets/' + id + '/scan', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sample_rate })
+    });
+    if (!r.ok) { $('scanmsg').textContent = 'scan start failed: ' + r.status; return; }
+    const { job_id } = await r.json();
+    pollJob(job_id, {
+      onProgress: job => {
+        fillBar($('scanprog'), job.done, job.total);
+        $('scanmsg').textContent = `dataset ${id}: ${job.done}/${job.total}` + (job.message ? ' — ' + job.message : '');
+      },
+      onDone: job => {
+        fillBar($('scanprog'), job.total || 1, job.total || 1);
+        $('scanmsg').textContent = `dataset ${id} queued: ${job.message || job.done + ' urls'}`;
+        loadDatasets();
+      },
+      onError: job => { $('scanmsg').textContent = 'scan error: ' + (job.error || 'unknown'); }
+    });
+  } catch (e) {
+    $('scanmsg').textContent = 'error: ' + e.message;
+  }
+}
+
+async function pollStats() {
+  try {
+    const s = await (await fetch('/stats')).json();
+    const q = s.queue || {};
+    const cell = (label, val) => `<div class="stat"><b>${val}</b><span>${label}</span></div>`;
+    const tiers = ['static', 'render'];
+    let html = cell('results total', s.results_total ?? 0);
+    for (const t of tiers) {
+      const st = q[t] || {};
+      html += cell(`${t} queued`, st.queued || 0) + cell(`${t} done`, st.done || 0);
+      if (st.error) html += cell(`${t} error`, st.error);
+    }
+    $('stats').innerHTML = html;
+  } catch (e) { $('stats').innerHTML = '<span class="muted">backend unreachable</span>'; }
+}
+
+loadDatasets();
+pollStats();
+setInterval(pollStats, 2000);
+</script>
+</body>
+</html>
