@@ -1,0 +1,596 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ad Integrity Scanner — Data Dictionary</title><style>
+:root{--bg:#0f1320;--panel:#161b2b;--card:#1a2032;--ink:#e7ecf5;--mut:#8a97b3;
+--acc:#5b8cff;--bd:#283150;--ok:#3ecf8e;--code:#0d1120;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,sans-serif}
+a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+#wrap{display:flex;min-height:100vh}
+#nav{position:sticky;top:0;align-self:flex-start;width:240px;height:100vh;overflow:auto;
+background:var(--panel);border-right:1px solid var(--bd);padding:22px 16px}
+#nav h1{font-size:15px;margin:0 0 2px}#nav .tag{color:var(--mut);font-size:12px;margin-bottom:18px}
+#nav a{display:block;color:var(--ink);padding:7px 10px;border-radius:7px;font-size:14px}
+#nav a:hover{background:var(--card);text-decoration:none}
+#nav a.doc{font-weight:600;margin-top:12px}
+#nav a.sub{color:var(--mut);font-size:13px;padding-left:20px}
+main{flex:1;max-width:920px;padding:40px 48px 80px}
+section{display:none}section.active{display:block}
+h1,h2,h3{line-height:1.3}h1{font-size:26px;border-bottom:1px solid var(--bd);padding-bottom:10px}
+h2{font-size:21px;margin-top:34px;border-bottom:1px solid var(--bd);padding-bottom:6px}
+h3{font-size:17px;margin-top:24px;color:#cdd6ea}
+code{background:var(--code);padding:2px 6px;border-radius:5px;font-size:13px;
+font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+pre{background:var(--code);border:1px solid var(--bd);border-radius:10px;padding:14px 16px;overflow:auto}
+pre code{background:none;padding:0}
+blockquote{border-left:3px solid var(--acc);margin:14px 0;padding:6px 16px;background:var(--card);
+border-radius:0 8px 8px 0;color:#cdd6ea}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+th,td{border:1px solid var(--bd);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--card);color:#cdd6ea}
+tr:nth-child(even) td{background:#141a29}
+hr{border:0;border-top:1px solid var(--bd);margin:28px 0}
+.banner{background:linear-gradient(90deg,#1a2032,#161b2b);border:1px solid var(--bd);
+border-radius:12px;padding:16px 20px;margin-bottom:26px}
+.banner b{color:var(--ok)}
+@media(max-width:760px){#nav{display:none}main{padding:24px}}
+
+main{margin:0 auto}
+</style></head>
+<body><main><h1 id="data-dictionary">Data Dictionary</h1>
+<p>Field-level reference for scan output. <strong>Generated</strong> by <code>python -m app.datadict</code> from <code>analytics._SCHEMA</code> + <code>scoring.WEIGHTS</code> — do not edit by hand. See <a href="./METRICS.md"><code>METRICS.md</code></a> for scoring formulas and the inputs behind each derived score.</p>
+<h2 id="composite-weights">Composite weights</h2>
+<p><code>integrity_score</code> = weight-normalized average of present sub-scores:</p>
+<table>
+<thead>
+<tr>
+<th>Sub-score</th>
+<th>Weight</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ad_experience</td>
+<td>0.22</td>
+</tr>
+<tr>
+<td>supply_chain</td>
+<td>0.2</td>
+</tr>
+<tr>
+<td>mfa</td>
+<td>0.18</td>
+</tr>
+<tr>
+<td>performance</td>
+<td>0.12</td>
+</tr>
+<tr>
+<td>video</td>
+<td>0.1</td>
+</tr>
+<tr>
+<td>brand_suitability</td>
+<td>0.1</td>
+</tr>
+<tr>
+<td>privacy</td>
+<td>0.08</td>
+</tr>
+</tbody>
+</table>
+<h2 id="export-csv-fields">Export / CSV fields</h2>
+<p>These are the columns in the CSV/Parquet export, in order.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>R/D</th>
+<th>Definition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>url</code></td>
+<td>VARCHAR</td>
+<td>raw</td>
+<td>Canonical (normalized) URL scanned.</td>
+</tr>
+<tr>
+<td><code>domain</code></td>
+<td>VARCHAR</td>
+<td>raw</td>
+<td>Registrable domain of the URL.</td>
+</tr>
+<tr>
+<td><code>scan_tier</code></td>
+<td>VARCHAR</td>
+<td>raw</td>
+<td>'static' (HTTP only) or 'render' (headless browser).</td>
+</tr>
+<tr>
+<td><code>integrity_score</code></td>
+<td>DOUBLE</td>
+<td>derived</td>
+<td>Composite 0-100; weight-normalized avg of present sub-scores.</td>
+</tr>
+<tr>
+<td><code>confidence</code></td>
+<td>DOUBLE</td>
+<td>derived</td>
+<td>0.4 static-only, 0.85 render-backed, 0.1 fetch failed.</td>
+</tr>
+<tr>
+<td><code>supply_chain</code></td>
+<td>DOUBLE</td>
+<td>derived</td>
+<td>Sub-score: ad-inventory selling transparency (ads.txt + sellers.json).</td>
+</tr>
+<tr>
+<td><code>ad_experience</code></td>
+<td>DOUBLE</td>
+<td>derived</td>
+<td>Sub-score: ad-layout clutter (A2CR, fold, sticky, gaps, refresh).</td>
+</tr>
+<tr>
+<td><code>mfa</code></td>
+<td>DOUBLE</td>
+<td>derived</td>
+<td>Sub-score: Made-For-Advertising risk from on-page ad load + thin content.</td>
+</tr>
+<tr>
+<td><code>video</code></td>
+<td>DOUBLE</td>
+<td>derived</td>
+<td>Sub-score: OLV behavior (autoplay); null when no video present.</td>
+</tr>
+<tr>
+<td><code>privacy</code></td>
+<td>DOUBLE</td>
+<td>derived</td>
+<td>Sub-score: consent-framework presence (TCF/GPP/USP/GPC).</td>
+</tr>
+<tr>
+<td><code>performance</code></td>
+<td>DOUBLE</td>
+<td>derived</td>
+<td>Sub-score: Core Web Vitals (LCP/CLS) + page weight.</td>
+</tr>
+<tr>
+<td><code>brand_suitability</code></td>
+<td>DOUBLE</td>
+<td>derived</td>
+<td>Sub-score: GARM-style content risk tier (heuristic).</td>
+</tr>
+<tr>
+<td><code>ads_txt_present</code></td>
+<td>BOOLEAN</td>
+<td>raw</td>
+<td>ads.txt found + parseable at the domain root.</td>
+</tr>
+<tr>
+<td><code>ads_txt_direct_ratio</code></td>
+<td>DOUBLE</td>
+<td>derived</td>
+<td>DIRECT / (DIRECT+RESELLER) authorized-seller lines.</td>
+</tr>
+<tr>
+<td><code>ads_txt_distinct_ad_systems</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td># distinct exchanges/SSPs authorized in ads.txt.</td>
+</tr>
+<tr>
+<td><code>https</code></td>
+<td>BOOLEAN</td>
+<td>raw</td>
+<td>Final URL served over HTTPS.</td>
+</tr>
+<tr>
+<td><code>total_supply_paths</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td># authorized-seller lines in ads.txt.</td>
+</tr>
+<tr>
+<td><code>resolved_sellers</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>ads.txt accounts found in the matching sellers.json.</td>
+</tr>
+<tr>
+<td><code>seller_resolution_rate</code></td>
+<td>DOUBLE</td>
+<td>derived</td>
+<td>resolved / resolvable accounts (supply-path verifiability).</td>
+</tr>
+<tr>
+<td><code>intermediary_ratio</code></td>
+<td>DOUBLE</td>
+<td>derived</td>
+<td>INTERMEDIARY / resolved sellers (reseller-hop density).</td>
+</tr>
+<tr>
+<td><code>confidential_sellers</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Resolved sellers marked is_confidential (opaque).</td>
+</tr>
+<tr>
+<td><code>ad_slot_count</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Ad slots detected (GPT runtime + ad-host iframes + markers).</td>
+</tr>
+<tr>
+<td><code>filled_slot_count</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Ad slots that rendered with area &gt; 0.</td>
+</tr>
+<tr>
+<td><code>ads_detected_via_gpt</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>How many slots came from the GPT runtime vs iframe/marker detection.</td>
+</tr>
+<tr>
+<td><code>above_fold_ads</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Filled ads whose top is within the opening viewport.</td>
+</tr>
+<tr>
+<td><code>below_fold_ads</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Filled ads below the opening viewport.</td>
+</tr>
+<tr>
+<td><code>ads_in_view</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Ads that reached &gt;=50% viewport visibility.</td>
+</tr>
+<tr>
+<td><code>ads_viewable_1s</code></td>
+<td>INTEGER</td>
+<td>derived</td>
+<td>Ads that held &gt;=50% visibility for &gt;=1s (MRC display viewability).</td>
+</tr>
+<tr>
+<td><code>ads_per_1000px</code></td>
+<td>DOUBLE</td>
+<td>derived</td>
+<td>Filled ad count per 1000px of page scroll height.</td>
+</tr>
+<tr>
+<td><code>sticky_ad_count</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Ads with CSS position fixed/sticky (anchored).</td>
+</tr>
+<tr>
+<td><code>interstitial</code></td>
+<td>BOOLEAN</td>
+<td>raw</td>
+<td>A filled ad covering &gt;=90% of the viewport.</td>
+</tr>
+<tr>
+<td><code>hidden_ad_count</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Ads in display:none/visibility:hidden/opacity:0 slots (GIVT).</td>
+</tr>
+<tr>
+<td><code>tiny_ad_count</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Ads in &lt;=2x2px (1x1 pixel) slots (GIVT).</td>
+</tr>
+<tr>
+<td><code>offscreen_ad_count</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Ads positioned off-canvas (GIVT).</td>
+</tr>
+<tr>
+<td><code>stacked_ad_count</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Ads overlapping another ad by &gt;50% (ad stacking, GIVT).</td>
+</tr>
+<tr>
+<td><code>suspicious_ad_count</code></td>
+<td>INTEGER</td>
+<td>derived</td>
+<td>Union of hidden/tiny/offscreen/stacked ads (served-but-not-viewable).</td>
+</tr>
+<tr>
+<td><code>ad_sizes</code></td>
+<td>VARCHAR</td>
+<td>raw</td>
+<td>Histogram of rendered ad sizes, e.g. '300x250:4;728x90:2'.</td>
+</tr>
+<tr>
+<td><code>a2cr</code></td>
+<td>DOUBLE</td>
+<td>derived</td>
+<td>Ad-to-content ratio = total ad pixel area / total page pixel area.</td>
+</tr>
+<tr>
+<td><code>first_screen_ad_coverage</code></td>
+<td>DOUBLE</td>
+<td>derived</td>
+<td>Ad pixels in the opening viewport / viewport area.</td>
+</tr>
+<tr>
+<td><code>first_screen_whitespace</code></td>
+<td>DOUBLE</td>
+<td>derived</td>
+<td>Fraction of opening viewport that is empty ('unused space', approx).</td>
+</tr>
+<tr>
+<td><code>first_ad_offset_px</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Vertical distance (px) from page top to the first ad.</td>
+</tr>
+<tr>
+<td><code>ad_gap_median_px</code></td>
+<td>INTEGER</td>
+<td>derived</td>
+<td>Median vertical gap between consecutive ad units.</td>
+</tr>
+<tr>
+<td><code>ad_refreshing</code></td>
+<td>BOOLEAN</td>
+<td>raw</td>
+<td>Whether any slot re-rendered during the dwell.</td>
+</tr>
+<tr>
+<td><code>min_refresh_seconds</code></td>
+<td>DOUBLE</td>
+<td>raw</td>
+<td>Shortest observed refresh interval (s).</td>
+</tr>
+<tr>
+<td><code>ad_cls_share</code></td>
+<td>DOUBLE</td>
+<td>derived</td>
+<td>Fraction of total CLS attributable to ad nodes.</td>
+</tr>
+<tr>
+<td><code>ad_load_avg_ms</code></td>
+<td>INTEGER</td>
+<td>derived</td>
+<td>Mean ad load time (ms from navigation start) across detected ads.</td>
+</tr>
+<tr>
+<td><code>ad_load_median_ms</code></td>
+<td>INTEGER</td>
+<td>derived</td>
+<td>Median ad load time (ms from navigation start).</td>
+</tr>
+<tr>
+<td><code>ad_load_max_ms</code></td>
+<td>INTEGER</td>
+<td>derived</td>
+<td>Slowest ad load time (ms from navigation start).</td>
+</tr>
+<tr>
+<td><code>ad_load_samples</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td># ads contributing a load time (GPT slot renders, else ad-host resource timings).</td>
+</tr>
+<tr>
+<td><code>ad_load_source</code></td>
+<td>VARCHAR</td>
+<td>raw</td>
+<td>Timing source for ad load speed: 'gpt_slot_render' or 'ad_host_resource_timing'.</td>
+</tr>
+<tr>
+<td><code>lcp_ms</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Largest Contentful Paint (ms, lab).</td>
+</tr>
+<tr>
+<td><code>cls</code></td>
+<td>DOUBLE</td>
+<td>raw</td>
+<td>Cumulative Layout Shift (lab; median-of-N when AI_RENDER_SAMPLES&gt;1).</td>
+</tr>
+<tr>
+<td><code>inp_ms</code></td>
+<td>INTEGER</td>
+<td>derived</td>
+<td>Synthetic INP proxy from a scripted interaction (lab, not field RUM).</td>
+</tr>
+<tr>
+<td><code>page_weight_bytes</code></td>
+<td>BIGINT</td>
+<td>raw</td>
+<td>Total encoded bytes over the network (CDP-authoritative).</td>
+</tr>
+<tr>
+<td><code>request_count</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td># network requests (CDP).</td>
+</tr>
+<tr>
+<td><code>third_party_host_count</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Distinct non-first-party registrable domains (CDP).</td>
+</tr>
+<tr>
+<td><code>tracker_domain_count</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Third-party domains matching the tracker list.</td>
+</tr>
+<tr>
+<td><code>tracker_entity_count</code></td>
+<td>INTEGER</td>
+<td>derived</td>
+<td>Distinct tracker OWNERS (Disconnect dataset, owner-collapsed).</td>
+</tr>
+<tr>
+<td><code>cpu_task_duration_s</code></td>
+<td>DOUBLE</td>
+<td>raw</td>
+<td>Main-thread task time in seconds (CDP Performance).</td>
+</tr>
+<tr>
+<td><code>dom_node_count</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Total DOM elements.</td>
+</tr>
+<tr>
+<td><code>schain_present</code></td>
+<td>BOOLEAN</td>
+<td>raw</td>
+<td>Prebid declared a SupplyChain object.</td>
+</tr>
+<tr>
+<td><code>schain_valid</code></td>
+<td>BOOLEAN</td>
+<td>derived</td>
+<td>schain complete and every hop's asi is authorized in ads.txt.</td>
+</tr>
+<tr>
+<td><code>video_viewable_2s</code></td>
+<td>INTEGER</td>
+<td>derived</td>
+<td>Videos that held &gt;=50% visibility for &gt;=2s (MRC video viewability).</td>
+</tr>
+<tr>
+<td><code>cmp_present</code></td>
+<td>BOOLEAN</td>
+<td>derived</td>
+<td>A consent-management platform is deployed (live API, locator iframe, or known vendor).</td>
+</tr>
+<tr>
+<td><code>cmp_vendor</code></td>
+<td>VARCHAR</td>
+<td>raw</td>
+<td>Detected CMP vendor (OneTrust, Sourcepoint, Google Funding Choices, ...).</td>
+</tr>
+<tr>
+<td><code>cmp_tcf</code></td>
+<td>BOOLEAN</td>
+<td>raw</td>
+<td>IAB TCF detected (__tcfapi or __tcfapiLocator iframe).</td>
+</tr>
+<tr>
+<td><code>cmp_gpp</code></td>
+<td>BOOLEAN</td>
+<td>raw</td>
+<td>IAB Global Privacy Platform detected (__gpp or __gppLocator).</td>
+</tr>
+<tr>
+<td><code>gpc</code></td>
+<td>BOOLEAN</td>
+<td>raw</td>
+<td>Global Privacy Control signalled by the browser.</td>
+</tr>
+<tr>
+<td><code>cookie_count</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Total cookies set (CDP; includes HttpOnly).</td>
+</tr>
+<tr>
+<td><code>third_party_cookie_count</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Cookies whose domain != first party.</td>
+</tr>
+<tr>
+<td><code>ssp_count</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Distinct SSP/exchange vendors detected in markup.</td>
+</tr>
+<tr>
+<td><code>prebid_bidder_count</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Distinct Prebid bidders observed.</td>
+</tr>
+<tr>
+<td><code>has_video</code></td>
+<td>BOOLEAN</td>
+<td>raw</td>
+<td>Any video player/element present.</td>
+</tr>
+<tr>
+<td><code>word_count</code></td>
+<td>INTEGER</td>
+<td>raw</td>
+<td>Visible body text word count.</td>
+</tr>
+<tr>
+<td><code>content_category</code></td>
+<td>VARCHAR</td>
+<td>derived</td>
+<td>IAB-style category via zero-shot embeddings (model2vec), keyword fallback.</td>
+</tr>
+<tr>
+<td><code>content_source</code></td>
+<td>VARCHAR</td>
+<td>raw</td>
+<td>Whether content was classified from 'static' HTML or the 'render' DOM (bot-blocked sites).</td>
+</tr>
+<tr>
+<td><code>suitability_tier</code></td>
+<td>VARCHAR</td>
+<td>derived</td>
+<td>GARM-style risk tier low/medium/high/floor via embeddings (heuristic).</td>
+</tr>
+<tr>
+<td><code>scanned_at</code></td>
+<td>TIMESTAMP</td>
+<td>raw</td>
+<td>Timestamp the record was written.</td>
+</tr>
+</tbody>
+</table>
+<p><em>R/D = raw (measured) or derived (computed). The full nested signal tree and the <code>score_breakdown</code> (every derived score with its raw inputs) are stored in <code>scan_results</code> and returned by <code>GET /scan/{id}</code>.</em></p>
+<h2 id="database-tables">Database tables</h2>
+<table>
+<thead>
+<tr>
+<th>Table</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>scan_results</code></td>
+<td>One row per completed scan — the deliverable {url -&gt; metrics + scores}. JSONB columns: signals (raw tree), metrics (flattened), sub_scores, score_breakdown (per-score raw inputs).</td>
+</tr>
+<tr>
+<td><code>scan_queue</code></td>
+<td>Postgres-backed work queue (FOR UPDATE SKIP LOCKED). tier static</td>
+</tr>
+<tr>
+<td><code>scan_ledger</code></td>
+<td>Dedup + tiered-TTL freshness per url_hash (page TTL).</td>
+</tr>
+<tr>
+<td><code>domain_signals</code></td>
+<td>Per-domain cached signals (ads.txt/sellers/robots/supply_paths), 24h TTL.</td>
+</tr>
+<tr>
+<td><code>sellers_json_cache</code></td>
+<td>Global per-ad-system sellers.json cache (7d TTL); seller id-&gt;entry map when small enough.</td>
+</tr>
+</tbody>
+</table></main></body></html>

@@ -109,6 +109,39 @@ Metric field reference is in <b>Data Dictionary</b>; scoring logic in <b>Metrics
     return out
 
 
+# Standalone single-doc pages (no sidebar) — for sharing one doc on its own.
+_PAGE_CSS = _CSS + """
+main{margin:0 auto}
+"""
+
+
+def build_standalone(*names: str) -> list[pathlib.Path]:
+    """Write one self-contained HTML file per doc to docs/<NAME>.html.
+
+    Pass markdown filenames (e.g. "METRICS.md"); default = all DOCS.
+    """
+    wanted = set(names)
+    written = []
+    for _sid, title, fname in DOCS:
+        if wanted and fname not in wanted:
+            continue
+        html = _render((ROOT / fname).read_text(encoding="utf-8"))
+        out = ROOT / "docs" / (pathlib.Path(fname).stem + ".html")
+        out.parent.mkdir(exist_ok=True)
+        out.write_text(f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ad Integrity Scanner — {title}</title><style>{_PAGE_CSS}</style></head>
+<body><main>{html}</main></body></html>""", encoding="utf-8")
+        written.append(out)
+    return written
+
+
 if __name__ == "__main__":
-    p = build()
-    print(f"wrote {p} ({p.stat().st_size // 1024} KB)")
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "standalone":
+        for p in build_standalone(*sys.argv[2:]):
+            print(f"wrote {p} ({p.stat().st_size // 1024} KB)")
+    else:
+        p = build()
+        print(f"wrote {p} ({p.stat().st_size // 1024} KB)")

@@ -1,0 +1,202 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ad Integrity Scanner — Overview</title><style>
+:root{--bg:#0f1320;--panel:#161b2b;--card:#1a2032;--ink:#e7ecf5;--mut:#8a97b3;
+--acc:#5b8cff;--bd:#283150;--ok:#3ecf8e;--code:#0d1120;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,sans-serif}
+a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+#wrap{display:flex;min-height:100vh}
+#nav{position:sticky;top:0;align-self:flex-start;width:240px;height:100vh;overflow:auto;
+background:var(--panel);border-right:1px solid var(--bd);padding:22px 16px}
+#nav h1{font-size:15px;margin:0 0 2px}#nav .tag{color:var(--mut);font-size:12px;margin-bottom:18px}
+#nav a{display:block;color:var(--ink);padding:7px 10px;border-radius:7px;font-size:14px}
+#nav a:hover{background:var(--card);text-decoration:none}
+#nav a.doc{font-weight:600;margin-top:12px}
+#nav a.sub{color:var(--mut);font-size:13px;padding-left:20px}
+main{flex:1;max-width:920px;padding:40px 48px 80px}
+section{display:none}section.active{display:block}
+h1,h2,h3{line-height:1.3}h1{font-size:26px;border-bottom:1px solid var(--bd);padding-bottom:10px}
+h2{font-size:21px;margin-top:34px;border-bottom:1px solid var(--bd);padding-bottom:6px}
+h3{font-size:17px;margin-top:24px;color:#cdd6ea}
+code{background:var(--code);padding:2px 6px;border-radius:5px;font-size:13px;
+font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+pre{background:var(--code);border:1px solid var(--bd);border-radius:10px;padding:14px 16px;overflow:auto}
+pre code{background:none;padding:0}
+blockquote{border-left:3px solid var(--acc);margin:14px 0;padding:6px 16px;background:var(--card);
+border-radius:0 8px 8px 0;color:#cdd6ea}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+th,td{border:1px solid var(--bd);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--card);color:#cdd6ea}
+tr:nth-child(even) td{background:#141a29}
+hr{border:0;border-top:1px solid var(--bd);margin:28px 0}
+.banner{background:linear-gradient(90deg,#1a2032,#161b2b);border:1px solid var(--bd);
+border-radius:12px;padding:16px 20px;margin-bottom:26px}
+.banner b{color:var(--ok)}
+@media(max-width:760px){#nav{display:none}main{padding:24px}}
+
+main{margin:0 auto}
+</style></head>
+<body><main><h1 id="ad-integrity-scanner">Ad Integrity Scanner</h1>
+<p><a href="./LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a></p>
+<blockquote>
+<p>Send a URL → get a transparent, 0–100 <strong>integrity score</strong> for the ad environment that display and OLV/video ads would run in, backed by ~60 raw signals.</p>
+</blockquote>
+<p>A local-first service that accepts a URL, scans the ad environment, computes
+integrity metrics, and stores <code>{url → metrics + scores}</code> in Postgres. Built in
+the spirit of commercial tools like Sincera / Scope3 / IAS — but in-house, with
+no paid vendor APIs.</p>
+<p><strong>Highlights</strong>
+- <strong>Hybrid crawl</strong> — cheap static HTTP fetch on every URL + headless-Chromium render on a sampled/prioritized subset (the render tier also gets through bot-protected inventory the static fetch can't).
+- <strong>7 weighted sub-scores</strong> → one composite, each shipping a <code>score_breakdown</code> of the raw inputs behind it (nothing opaque):
+  supply-chain transparency · ad experience/clutter · MFA ad-load risk · performance · video/OLV · brand suitability · privacy.
+- <strong>Deep ad-layout geometry</strong> — A2CR, above/below-fold counts, ad sizes (IAB), inter-ad gaps, sticky/interstitial, first-screen whitespace, MRC time-weighted viewability, GIVT validity checks.
+- <strong>Supply-chain</strong> — ads.txt + <strong>sellers.json cross-resolution</strong> (global per-ad-system cache) for real supply-path transparency.
+- <strong>CDP-authoritative</strong> page weight / requests / cookies / CPU; <strong>embedding</strong> content + brand-suitability classifier (model2vec, keyword fallback).
+- <strong>Scales on one box</strong> toward ~1M URLs/day: async endpoint, Postgres-backed queue, tiered-TTL dedup, maintenance reaper, Parquet/CSV analytics, and a browser GUI.</p>
+<p>📖 <strong>Browse the docs as one HTML page:</strong> <a href="./docs/index.html"><code>docs/index.html</code></a>
+(built from the markdown via <code>python -m app.docsite</code>).</p>
+<p>See <a href="./PLAN.md"><code>PLAN.md</code></a> for the full design and roadmap,
+<a href="./DATA_DICTIONARY.md"><code>DATA_DICTIONARY.md</code></a> for every field, and
+<a href="./METRICS.md"><code>METRICS.md</code></a> for the <strong>metrics dictionary</strong> — every metric with
+its definition, raw vs derived type, and (for derived scores) the raw inputs +
+formula behind it. Each record also carries a <code>score_breakdown</code> pairing every
+sub-score with the raw data it was computed from (<code>GET /scan/{id}</code>).</p>
+<h2 id="status-feature-complete-validated-by-a-198-page-ground-truth-suite">Status: feature-complete (validated by a 198-page ground-truth suite)</h2>
+<p>Implemented:
+- <code>POST /scan</code> — async fire-and-forget intake (returns <code>202</code> + <code>scan_id</code>); <code>GET /scan/{id}</code> (status/result + <code>score_breakdown</code>); <code>GET /stats</code>; browser <strong>GUI</strong> at <code>/</code>.
+- URL normalization + dedup via a tiered-TTL <strong>scan ledger</strong>; <strong>Postgres-backed work queue</strong> (<code>FOR UPDATE SKIP LOCKED</code>, no Redis/Docker) with retry + reaper + pruning.
+- <strong>SSRF guard</strong> (private/metadata blocking on every hop) + realistic-Chrome UA so bot-protected inventory serves the real page; the render tier gets through Cloudflare where static fetch can't.
+- <strong>Static tier:</strong> <code>ads.txt</code> / <code>app-ads.txt</code> / <code>robots.txt</code> (per-domain 24h cache) + <strong>sellers.json cross-resolution</strong> (global per-ad-system cache → supply-path transparency) + page HTML parsing.
+- <strong>Render tier (Playwright/Chromium):</strong> persistent pool renders a sampled subset (<code>AI_RENDER_SAMPLE_RATE</code>) with two planes — in-page JS (geometry, viewability, consent, prebid, video) + <strong>CDP</strong> (authoritative bytes/requests/cookies/CPU). Captures: ad-slot geometry (A2CR, above/below-fold, sizes, gaps, sticky, interstitial, first-screen whitespace), <strong>MRC time-weighted viewability</strong>, <strong>GIVT</strong> validity (hidden/tiny/offscreen/stacked), ad refresh, CWV (LCP/CLS, median-of-N optional) + <strong>synthetic INP</strong>, Prebid bidders + <strong>schain validation</strong>, CMP (TCF/GPP/USP/GPC + vendor/locator detection), tracker classification (Disconnect dataset, owner-collapsed), and video/OLV (autoplay, viewability ≥2s, instream/outstream).
+- <strong>7 sub-scores</strong> — supply_chain, ad_experience, mfa, performance, video, brand_suitability, privacy — → weight-normalized composite <code>integrity_score</code>, each with a <code>score_breakdown</code> of raw inputs. Confidence 0.4 static → 0.85 render.
+- <strong>MFA / ad-load risk</strong> (on-page ad load + thin-content/link-density), <strong>content category</strong> + <strong>brand-suitability</strong> via zero-shot embeddings (model2vec, keyword fallback); bot-blocked pages classify from the rendered DOM (<code>content_source</code>).
+- <strong>Maintenance worker</strong> (reaper + queue pruning + optional TTL re-scan), <strong>analytics export</strong> (Parquet/CSV via DuckDB), structured <code>ai.*</code> logging.
+- <strong>Ground-truth accuracy suite</strong> (<code>tests/accuracy/</code>, ~200 fixtures) — 100% on deterministic metrics.</p>
+<blockquote>
+<p><strong>Note on content category / brand suitability:</strong> classified by zero-shot
+static embeddings (model2vec), with the keyword lexicon as a fallback when the
+model can't load. No vendor APIs. Embeddings judge <em>topic</em>, so they can flag
+content strongly <em>about</em> crime/violence even when reporting on it; outputs are
+marked <code>heuristic</code>. Treat them as advisory hints.</p>
+</blockquote>
+<h2 id="why-postgres-for-the-queue-not-redis">Why Postgres for the queue (not Redis)</h2>
+<p>This machine has Postgres 17 running already and no Docker/Redis. A Postgres job
+table with <code>SKIP LOCKED</code> gives the same claim-once semantics with zero extra
+infrastructure and easily handles 1M/day (~12/sec). Swap to Redis/arq later
+behind <code>app/queue.py</code> if you scale out to multiple machines.</p>
+<h2 id="setup">Setup</h2>
+<p>Requires the running Homebrew <code>postgresql@17</code> and Python 3.12.</p>
+<pre><code class="language-bash">cd &quot;ad integrity&quot;
+
+# 1. Create the database (one time)
+createdb ad_integrity
+
+# 2. Virtualenv + deps
+/opt/homebrew/bin/python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m playwright install chromium   # render tier browser (~130 MB)
+# The content classifier downloads a ~30 MB embedding model (model2vec) on first
+# use; if offline it falls back to the keyword classifier automatically.
+
+# 3. Config
+cp .env.example .env        # edit AI_DATABASE_URL if your PG user/db differ
+</code></pre>
+<h2 id="run">Run</h2>
+<pre><code class="language-bash">source .venv/bin/activate
+
+# API (applies schema on startup)
+uvicorn app.main:app --reload --port 8000
+
+# Static worker (separate terminal) — scans + enqueues render jobs
+python -m app.workers.static_worker
+
+# Render worker (separate terminal) — Playwright; needs `playwright install chromium`
+python -m app.workers.render_worker
+
+# Maintenance worker (optional, separate terminal) — reaper + queue pruning + re-scan
+python -m app.workers.maintenance
+</code></pre>
+<p>Then open the <strong>GUI</strong> at <a href="http://localhost:8000/">http://localhost:8000/</a> to pick a URL file (e.g.
+<code>sample_urls.txt</code>) and submit it one URL at a time.</p>
+<h3 id="analytics">Analytics</h3>
+<pre><code class="language-bash"># Export scan_results to Parquet, then summarize with DuckDB
+python -m app.analytics export scan_results.parquet
+python -m app.analytics summary scan_results.parquet
+</code></pre>
+<h2 id="try-it">Try it</h2>
+<pre><code class="language-bash"># Submit a URL -&gt; 202 + scan_id
+curl -s -X POST localhost:8000/scan \
+  -H 'content-type: application/json' \
+  -d '{&quot;url&quot;:&quot;https://www.example.com/some/article?utm_source=x&quot;}' | jq
+
+# Check status / result
+curl -s localhost:8000/scan/&lt;scan_id&gt; | jq
+
+curl -s localhost:8000/healthz | jq
+
+# Queue depth + result counts
+curl -s localhost:8000/stats | jq
+</code></pre>
+<h2 id="tests">Tests</h2>
+<pre><code class="language-bash">source .venv/bin/activate
+
+# Unit tests (no DB needed)
+pytest tests/test_normalize.py -q
+
+# Integration tests (writes to a throwaway DB — do NOT point at prod data)
+createdb ad_integrity_test
+AI_DATABASE_URL=&quot;postgresql://$USER@localhost:5432/ad_integrity_test&quot; \
+  pytest tests/test_ledger.py -q
+</code></pre>
+<h2 id="accuracy-suite-ground-truth">Accuracy suite (ground truth)</h2>
+<p><code>tests/accuracy/</code> generates ~200 self-contained fixture pages whose ad layouts
+we fully control — so the <strong>true values are known</strong> — covering different sizes,
+counts, above/below-fold splits, sticky/interstitial, GIVT traps (hidden, 1×1,
+off-screen, stacked), decoys, dormant CMPs, and category/suitability text. The
+harness serves them locally, scans each through the real render path, and scores
+measured vs. truth:</p>
+<pre><code class="language-bash">AI_SSRF_ALLOW_HOSTS=127.0.0.1 PYTHONPATH=. python -m tests.accuracy.run   # scorecard
+AI_ACCURACY=1 AI_SSRF_ALLOW_HOSTS=127.0.0.1 pytest tests/test_accuracy.py  # as a gated test
+</code></pre>
+<p>Deterministic metrics (slot/fold/size/GIVT counts, A2CR, CMP presence) currently
+score <strong>100%</strong>; content-category ~98%. The generator's truth logic is also unit-
+tested without rendering (runs in the normal <code>pytest</code>).</p>
+<h2 id="layout">Layout</h2>
+<pre><code>app/
+  config.py            settings (env prefix AI_)
+  normalize.py         URL canonicalization + hashing + domain extraction
+  db.py                asyncpg pool + schema bootstrap
+  queue.py             Postgres work queue (enqueue / claim / done / error)
+  ledger.py            dedup + tiered-TTL freshness
+  service.py           submit / status orchestration
+  models.py            API schemas
+  main.py              FastAPI app (+ GUI route at /)
+  analytics.py         scan_results -&gt; Parquet export + DuckDB summary (CLI)
+  ssrf.py              SSRF guard (private/metadata IP blocking)
+  static/index.html    browser GUI (file picker + sequential submit)
+  fetch.py             async httpx fetcher (static tier)
+  signals_static.py    static signal collection (domain files + page HTML)
+  scoring.py           sub-scores + weighted composite + confidence
+  results.py           shared scan_results persistence
+  domain_cache.py      per-domain signal cache (24h TTL)
+  supply_resolve.py    sellers.json cross-resolution (global per-ad-system cache)
+  content.py           keyword content/brand-suitability classifier (fallback)
+  content_ml.py        zero-shot embedding classifier (model2vec)
+  datadict.py          generates DATA_DICTIONARY.md
+  data/                bundled Disconnect tracker dataset
+  parsers/             ads.txt + sellers.json + HTML parsers
+  render/              Playwright pool (browser.py), collector (collect.py),
+                       in-page JS (instrument.py), CDP net accounting (netaccount.py)
+  workers/
+    static_worker.py   static tier; enqueues render jobs per sampling gate
+    render_worker.py   render tier; merges + re-scores the same scan_id
+    maintenance.py     reaper + queue pruning + TTL re-scan loop
+sql/schema.sql         scan_queue, scan_ledger, domain_signals, sellers_json_cache, scan_results
+tests/                 unit (normalize/parser/scoring/content/ssrf/analytics)
+                       + integration (ledger/queue/maintenance) + accuracy/ (ground-truth)
+</code></pre>
+<h2 id="license">License</h2>
+<p><a href="./LICENSE">MIT</a> © 2026 Kenneth Rona</p></main></body></html>

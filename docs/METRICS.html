@@ -1,0 +1,372 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ad Integrity Scanner — Metrics</title><style>
+:root{--bg:#0f1320;--panel:#161b2b;--card:#1a2032;--ink:#e7ecf5;--mut:#8a97b3;
+--acc:#5b8cff;--bd:#283150;--ok:#3ecf8e;--code:#0d1120;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,sans-serif}
+a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+#wrap{display:flex;min-height:100vh}
+#nav{position:sticky;top:0;align-self:flex-start;width:240px;height:100vh;overflow:auto;
+background:var(--panel);border-right:1px solid var(--bd);padding:22px 16px}
+#nav h1{font-size:15px;margin:0 0 2px}#nav .tag{color:var(--mut);font-size:12px;margin-bottom:18px}
+#nav a{display:block;color:var(--ink);padding:7px 10px;border-radius:7px;font-size:14px}
+#nav a:hover{background:var(--card);text-decoration:none}
+#nav a.doc{font-weight:600;margin-top:12px}
+#nav a.sub{color:var(--mut);font-size:13px;padding-left:20px}
+main{flex:1;max-width:920px;padding:40px 48px 80px}
+section{display:none}section.active{display:block}
+h1,h2,h3{line-height:1.3}h1{font-size:26px;border-bottom:1px solid var(--bd);padding-bottom:10px}
+h2{font-size:21px;margin-top:34px;border-bottom:1px solid var(--bd);padding-bottom:6px}
+h3{font-size:17px;margin-top:24px;color:#cdd6ea}
+code{background:var(--code);padding:2px 6px;border-radius:5px;font-size:13px;
+font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+pre{background:var(--code);border:1px solid var(--bd);border-radius:10px;padding:14px 16px;overflow:auto}
+pre code{background:none;padding:0}
+blockquote{border-left:3px solid var(--acc);margin:14px 0;padding:6px 16px;background:var(--card);
+border-radius:0 8px 8px 0;color:#cdd6ea}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+th,td{border:1px solid var(--bd);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--card);color:#cdd6ea}
+tr:nth-child(even) td{background:#141a29}
+hr{border:0;border-top:1px solid var(--bd);margin:28px 0}
+.banner{background:linear-gradient(90deg,#1a2032,#161b2b);border:1px solid var(--bd);
+border-radius:12px;padding:16px 20px;margin-bottom:26px}
+.banner b{color:var(--ok)}
+@media(max-width:760px){#nav{display:none}main{padding:24px}}
+
+main{margin:0 auto}
+</style></head>
+<body><main><h1 id="metrics-dictionary">Metrics Dictionary</h1>
+<p>Every metric the scanner produces, with its definition, <strong>type</strong> (RAW = measured
+directly / DERIVED = computed), <strong>tier</strong> (static HTTP vs headless render), and —
+for derived metrics — the <strong>raw inputs + formula</strong> behind it. The same raw inputs
+are exposed per-record in <code>score_breakdown</code> (via <code>GET /scan/{id}</code>) and flattened
+into <code>metrics</code> / the CSV export, so no derived number is opaque.</p>
+<p>Sub-scores are <strong>0–100, higher = better integrity</strong>. The composite
+<code>integrity_score</code> is the weight-normalized average over whichever sub-scores are
+present (weights below). Confidence: 0.4 static-only → 0.85 render-backed.</p>
+<hr />
+<h2 id="composite">Composite</h2>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Type</th>
+<th>Definition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>integrity_score</code></td>
+<td>DERIVED</td>
+<td>Weighted average of present sub-scores, renormalized by present weight. Inputs: all sub-scores + their weights.</td>
+</tr>
+<tr>
+<td><code>confidence</code></td>
+<td>DERIVED</td>
+<td>0.4 if only static signals, 0.85 if render-backed, 0.1 if fetch failed.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Sub-score weights:</strong> supply_chain .20 · ad_experience .22 · mfa .18 · performance .12 · video .10 · brand_suitability .10 · privacy .08.</p>
+<hr />
+<h2 id="1-supply-chain-transparency-static-domain-level-cached-24h">1. Supply-chain transparency  <em>(static, domain-level, cached 24h)</em></h2>
+<p><strong><code>supply_chain</code> (DERIVED, 0–100)</strong> — how transparently the site's ad inventory is sold. <em>Not</em> an ad-quality measure.
+Weighted average of available components (renormalized so the sellers.json terms only count when resolution succeeded): <code>ads_txt_present</code> (35), <code>direct_ratio</code> (25), <code>ownership_declared</code> (15), <code>https</code> (10), <code>seller_resolution</code> (10), <code>seller_transparency = 1−confidential_ratio</code> (5). Raw inputs:</p>
+<table>
+<thead>
+<tr>
+<th>Raw metric</th>
+<th>Definition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ads_txt_present</code></td>
+<td>ads.txt found + parseable at the domain root</td>
+</tr>
+<tr>
+<td><code>ads_txt_direct_count</code> / <code>ads_txt_reseller_count</code></td>
+<td># DIRECT vs RESELLER authorized-seller lines</td>
+</tr>
+<tr>
+<td><code>ads_txt_direct_ratio</code></td>
+<td>DIRECT / (DIRECT + RESELLER) — higher = less reseller arbitrage</td>
+</tr>
+<tr>
+<td><code>ads_txt_distinct_ad_systems</code></td>
+<td># distinct exchanges/SSPs authorized</td>
+</tr>
+<tr>
+<td><code>ads_txt_distinct_accounts</code></td>
+<td># distinct (ad system, account) pairs</td>
+</tr>
+<tr>
+<td><code>ownership_declared</code></td>
+<td>OWNERDOMAIN or MANAGERDOMAIN present</td>
+</tr>
+<tr>
+<td><code>https</code></td>
+<td>final URL served over https</td>
+</tr>
+</tbody>
+</table>
+<p><strong>sellers.json cross-resolution</strong> — each ad system's <code>sellers.json</code> is fetched once into a global 7-day cache, and the publisher's ads.txt account IDs are looked up in it:</p>
+<table>
+<thead>
+<tr>
+<th>Raw / derived</th>
+<th>Definition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>total_supply_paths</code></td>
+<td># authorized-seller lines in ads.txt</td>
+</tr>
+<tr>
+<td><code>ad_systems_with_sellers_json</code></td>
+<td># ad systems whose sellers.json resolved (within the top-30 cap)</td>
+</tr>
+<tr>
+<td><code>resolved_sellers</code> / <code>unresolved_accounts</code></td>
+<td>account IDs found vs not found in the matching sellers.json</td>
+</tr>
+<tr>
+<td><code>seller_resolution_rate</code></td>
+<td>resolved / resolvable — higher = more verifiable supply path</td>
+</tr>
+<tr>
+<td><code>intermediary_count</code> / <code>publisher_seller_count</code> / <code>intermediary_ratio</code></td>
+<td>seller_type breakdown; high intermediary ratio = more reseller hops</td>
+</tr>
+<tr>
+<td><code>confidential_sellers</code> / <code>confidential_ratio</code></td>
+<td>sellers marked <code>is_confidential</code> (opaque)</td>
+</tr>
+<tr>
+<td><code>direct_domain_match</code></td>
+<td>DIRECT lines whose sellers.json <code>domain</code> matches the publisher</td>
+</tr>
+</tbody>
+</table>
+<p>Also captured: app-ads.txt presence/counts, robots.txt (sitemap, disallow count).</p>
+<h2 id="2-ad-experience-clutter-render">2. Ad experience / clutter  <em>(render)</em></h2>
+<p><strong><code>ad_experience</code> (DERIVED, 0–100)</strong> — penalizes layout clutter. <code>100 − penalties</code>, where penalties come from A2CR (≤40), above-fold stacking (≤20), total slot count (≤15), sticky ads (≤10), first-screen ad coverage (≤15), cramped spacing (10 if median gap &lt;200px with &gt;3 ads), refresh (25 if &lt;15s, else 12). Raw inputs:</p>
+<table>
+<thead>
+<tr>
+<th>Raw metric</th>
+<th>Type</th>
+<th>Definition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ad_slot_count</code></td>
+<td>RAW</td>
+<td>ad slots detected — GPT runtime <strong>+</strong> ad-host iframes + <code>google_ads_iframe_</code>/<code>adsbygoogle</code>/<code>data-google-query-id</code> markers (not GPT-only)</td>
+</tr>
+<tr>
+<td><code>ads_detected_via_gpt</code></td>
+<td>RAW</td>
+<td>how many of those came from the GPT runtime (vs iframe/marker detection)</td>
+</tr>
+<tr>
+<td><code>filled_slot_count</code> / <code>empty_slot_count</code></td>
+<td>RAW</td>
+<td>slots that rendered with area &gt; 0 vs collapsed/unfilled</td>
+</tr>
+<tr>
+<td><code>ads_in_view</code></td>
+<td>RAW</td>
+<td>ad slots that reached ≥50% viewport visibility (IntersectionObserver)</td>
+</tr>
+<tr>
+<td><code>ads_viewable_1s</code></td>
+<td>DERIVED</td>
+<td>ads that held ≥50% visibility for ≥1 continuous second (MRC display viewability). Inputs: per-slot <code>viewable_ms</code></td>
+</tr>
+<tr>
+<td><code>ads_per_screen</code> / <code>ads_per_1000px</code></td>
+<td>DERIVED</td>
+<td>ad density normalized to scroll depth. Inputs: <code>filled_count</code>, page height, viewport height</td>
+</tr>
+<tr>
+<td><code>interstitial</code></td>
+<td>RAW</td>
+<td>a filled ad covering ≥90% of the viewport</td>
+</tr>
+<tr>
+<td><code>ad_cls_share</code></td>
+<td>DERIVED</td>
+<td>fraction of total CLS attributable to ad nodes (layout-shift sources matched to tagged ad elements)</td>
+</tr>
+<tr>
+<td><code>hidden_ad_count</code> / <code>tiny_ad_count</code> / <code>offscreen_ad_count</code> / <code>stacked_ad_count</code></td>
+<td>RAW</td>
+<td><strong>GIVT-style validity</strong> — filled ads rendered into hidden (display:none/visibility/opacity), 1×1-pixel, off-canvas, or overlapping (stacked) slots; classic served-but-not-viewable signals</td>
+</tr>
+<tr>
+<td><code>suspicious_ad_count</code></td>
+<td>DERIVED</td>
+<td>union of the four GIVT counts; small penalty applied to <code>ad_experience</code></td>
+</tr>
+<tr>
+<td><code>above_fold_ads</code> / <code>below_fold_ads</code></td>
+<td>RAW</td>
+<td>filled slots whose top is within / below the opening viewport</td>
+</tr>
+<tr>
+<td><code>ad_sizes</code></td>
+<td>RAW</td>
+<td>histogram of rendered ad sizes (e.g. <code>300x250:4;728x90:2</code>), IAB-named where standard</td>
+</tr>
+<tr>
+<td><code>a2cr</code></td>
+<td>DERIVED</td>
+<td>ad-to-content ratio = total ad pixel area / total page pixel area. Inputs: <code>total_ad_area_px</code>, <code>page_area_px</code></td>
+</tr>
+<tr>
+<td><code>first_screen_ad_coverage</code></td>
+<td>DERIVED</td>
+<td>ad pixels visible in the opening viewport / viewport area</td>
+</tr>
+<tr>
+<td><code>first_screen_whitespace</code></td>
+<td>DERIVED</td>
+<td>fraction of the opening viewport that is empty (grid-sampled <code>elementFromPoint</code>; <strong>approximate</strong>) — "unused space"</td>
+</tr>
+<tr>
+<td><code>first_ad_offset_px</code></td>
+<td>RAW</td>
+<td>vertical distance (px) from page top to the first ad</td>
+</tr>
+<tr>
+<td><code>ad_gap_min_px</code> / <code>ad_gap_median_px</code> / <code>ad_gap_max_px</code></td>
+<td>DERIVED</td>
+<td>vertical gap between consecutive ad units (sorted by top). Inputs: per-slot <code>top</code>+<code>height</code></td>
+</tr>
+<tr>
+<td><code>sticky_ad_count</code></td>
+<td>RAW</td>
+<td>slots with CSS position fixed/sticky (anchored ads)</td>
+</tr>
+<tr>
+<td><code>ad_refreshing</code> / <code>ad_refresh_events</code> / <code>min_refresh_seconds</code></td>
+<td>RAW</td>
+<td>observed slot re-renders during the dwell + shortest interval seen</td>
+</tr>
+<tr>
+<td><code>total_ad_area_px</code> / <code>page_area_px</code></td>
+<td>RAW</td>
+<td>summed ad pixel area; full scroll-height page area</td>
+</tr>
+<tr>
+<td><code>ad_load_avg_ms</code> / <code>ad_load_median_ms</code> / <code>ad_load_max_ms</code></td>
+<td>DERIVED</td>
+<td><strong>ad load speed</strong> — time (ms, from navigation start) until each ad rendered, aggregated. Source: GPT <code>slotRenderEnded</code> first-render timestamp per slot; for non-GPT inventory, ad-host <strong>Resource Timing</strong> <code>responseEnd</code> (<code>ad_load_source</code> records which). Lab timing — below-fold lazy-loaded ads render only after the auto-scroll, so they legitimately run longer. Informational (not yet folded into a score). Inputs: per-slot render timestamps / ad-host resource timings</td>
+</tr>
+<tr>
+<td><code>ad_load_samples</code></td>
+<td>RAW</td>
+<td># ads that contributed a load time</td>
+</tr>
+</tbody>
+</table>
+<h2 id="3-mfa-ad-load-risk-render-static-proxy-fallback">3. MFA / ad-load risk  <em>(render; static proxy fallback)</em></h2>
+<p><strong><code>mfa</code> (DERIVED, 0–100; higher = less MFA-like)</strong> — per project decision, driven by <strong>on-page ad load only</strong> (no traffic-source data). <code>100 − risk</code>, risk from A2CR (≤45), filled slot count (≤20), above-fold stacking (≤10), sub-15s refresh (15), thin content (&lt;200 words +25, &lt;500 +12), link-density (link/text &gt;0.2 +15, &gt;0.1 +7). Raw inputs: <code>a2cr</code>, <code>filled_count</code>, <code>above_fold_count</code>, <code>refreshing</code>, <code>min_refresh_seconds</code>, <code>word_count</code>, <code>link_to_text_ratio</code>, <code>rendered</code>.</p>
+<h2 id="4-performance-render">4. Performance  <em>(render)</em></h2>
+<p><strong><code>performance</code> (DERIVED, 0–100)</strong> — weighted: LCP 0.5, CLS 0.3, page weight 0.2. LCP scored 100 at ≤2.5s → 0 at ≥6s; CLS 100 at ≤0.1 → 0 at ≥0.5; weight 100 at ≤2MB → 0 at ≥8MB. Raw inputs:</p>
+<table>
+<thead>
+<tr>
+<th>Raw metric</th>
+<th>Definition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lcp_ms</code></td>
+<td>Largest Contentful Paint (lab, this render)</td>
+</tr>
+<tr>
+<td><code>cls</code></td>
+<td>Cumulative Layout Shift (lab; varies between renders)</td>
+</tr>
+<tr>
+<td><code>page_weight_bytes</code></td>
+<td><strong>CDP-authoritative</strong> total encoded bytes (<code>Network.loadingFinished</code>), not the under-reporting Resource Timing API. Fonts/media are blocked by default (<code>AI_RENDER_BLOCK_RESOURCES</code>); images are kept so weight is accurate</td>
+</tr>
+<tr>
+<td><code>bytes_by_type</code></td>
+<td>byte breakdown Document/Script/Stylesheet/Image/Font/Media/XHR/Fetch</td>
+</tr>
+<tr>
+<td><code>request_count</code></td>
+<td># network requests (CDP)</td>
+</tr>
+<tr>
+<td><code>third_party_host_count</code></td>
+<td>distinct non-first-party registrable domains (CDP)</td>
+</tr>
+<tr>
+<td><code>cpu_task_duration_s</code></td>
+<td>main-thread task time (CDP Performance)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="5-privacy-consent-render">5. Privacy / consent  <em>(render)</em></h2>
+<p><strong><code>privacy</code> (DERIVED, 0–100)</strong> — whether a consent-management platform is deployed. <code>50·TCF + 30·GPP + 10·USP</code>; if no live framework but a <strong>CMP vendor is detected</strong> (deployed but dormant — e.g. an EU TCF prompt that doesn't fire for our non-EU vantage point), 40; if none, 10 (&gt;10 trackers) or 20. Detection uses the live API <strong>and</strong> the spec locator iframes (<code>__tcfapiLocator</code> etc.) <strong>and</strong> known vendor scripts (OneTrust, Sourcepoint, Google Funding Choices, Didomi, …) so region-gated CMPs aren't missed. Measures whether consent capture is <em>implemented</em>, <strong>not</strong> whether it's honored. Raw inputs: <code>cmp_present</code>, <code>cmp_vendor</code>, <code>cmp_tcf</code>, <code>cmp_gpp</code>, <code>cmp_usp</code>, <code>cmp_tcf_api_live</code>, <code>gpc</code>, <code>cookie_count</code>, <code>tracker_domain_count</code>.</p>
+<h2 id="6-video-olv-render-only-when-video-present">6. Video / OLV  <em>(render; only when video present)</em></h2>
+<p><strong><code>video</code> (DERIVED, 0–100)</strong> — <code>100 − 40</code> if unmuted autoplay, <code>−15</code> if muted autoplay. Excluded from composite when no video. Raw inputs: <code>has_video</code>, <code>video_autoplay</code>, <code>video_muted_autoplay</code>, players (jwplayer/videojs), <code>video_tag_count</code>.</p>
+<h2 id="7-brand-suitability-static-heuristic">7. Brand suitability  <em>(static — heuristic)</em></h2>
+<p><strong><code>brand_suitability</code> (DERIVED, 0–100)</strong> — maps a GARM-style risk tier to a score (low 100 / medium 70 / high 40 / floor 10). Raw inputs: <code>suitability_tier</code>, <code>suitability_flags</code>, <code>risk_weight</code>. Classified by <strong>zero-shot embeddings</strong> (model2vec <code>potion-base-8M</code>): page text is compared to short risk-class prototypes vs benign anchors, flagging only matches that clearly beat the benign baseline. Falls back to the keyword lexicon if the model can't load (<code>method</code> field records which). Still <strong><code>heuristic</code></strong>: embeddings judge topic, so they can flag content that is strongly <em>about</em> violence/crime even when reporting on it (they cluster related risk concepts); thin/diluted real pages land milder than keyword-dense text. Advisory only.</p>
+<h2 id="8-content-ad-tech-footprint-informational-not-scored-directly">8. Content &amp; ad-tech footprint  <em>(informational, not scored directly)</em></h2>
+<p><code>content_category</code> (+confidence) — <strong>zero-shot embedding</strong> classification (model2vec) into IAB-style tier-1 categories, with keyword fallback. Classified from the static HTML when available, else from the <strong>rendered DOM</strong> (the render tier loads bot-protected pages the static fetch is blocked from) — <code>content_source</code> records <code>static</code> vs <code>render</code>. <code>word_count</code>, <code>paragraph_count</code>, <code>link_count</code>, <code>link_to_text_ratio</code>, <code>has_gpt</code>, <code>has_prebid</code>, <code>ssp_count</code>, <code>prebid_bidder_count</code>, <code>prebid_version</code>, <code>native_widgets</code>, <code>ad_request_count</code>, <code>dom_node_count</code>.</p>
+<hr />
+<h2 id="roadmap-to-commercial-parity">Roadmap to commercial parity</h2>
+<p>Grounded in the union of what Sincera/OpenSincera, Scope3, IAS, DoubleVerify, Jounce, DeepSee, MRC and IAB actually measure. Status vs that target:</p>
+<h3 id="done-metrics-v2">✅ Done (metrics v2)</h3>
+<ul>
+<li><strong>Page weight / bytes via CDP</strong> — authoritative <code>Network.loadingFinished.encodedDataLength</code>, with <code>bytes_by_type</code>. (Was ~2× under-reported by Resource Timing.)</li>
+<li><strong>Cookies via CDP</strong> — <code>getAllCookies</code> incl. HttpOnly; 1st/3rd-party split.</li>
+<li><strong>Multi-source ad detection</strong> — GPT runtime + ad-host iframes + GPT/adsense markers, nesting de-duped (no longer GPT-only).</li>
+<li><strong>MRC time-weighted viewability</strong> — <code>ads_in_view</code> + <code>ads_viewable_1s</code> (≥50% for ≥1s) via IntersectionObserver over the dwell.</li>
+<li><strong>Refresh</strong> — GPT events + MutationObserver iframe-swap counting; dwell raised to 8s.</li>
+<li><strong>Ad density</strong> per screen / per 1000px; <strong>interstitial detection</strong>; <strong>ad-attributable CLS</strong>.</li>
+<li><strong>CPU seconds</strong> + <strong>CDP request / third-party-host counts</strong>; <strong>video player area + large-player flag</strong>.</li>
+</ul>
+<h3 id="done-render-latest">✅ Done (render, latest)</h3>
+<ul>
+<li><strong>CLS median-of-N renders</strong> — <code>AI_RENDER_SAMPLES&gt;1</code> renders N times and takes the median CLS (config-gated; N× cost).</li>
+<li><strong>Synthetic INP</strong> (<code>inp_ms</code>) — a scripted keyboard interaction + Event Timing observer yields a lab interaction-latency proxy. <em>(Not real-user field INP.)</em></li>
+<li><strong>Behavioral sticky</strong> — a scroll probe re-reads ad rects; ads that don't move are anchored (catches JS-driven sticky CSS misses).</li>
+<li><strong>instream-vs-outstream</strong> (<code>video_instream_count</code> / <code>video_outstream_count</code>) — heuristic from player context + ad-slot containment + muted-autoplay.</li>
+<li><strong>Video viewability</strong> (<code>video_viewable_2s</code>) — <code>&lt;video&gt;</code> held ≥50% visible ≥2s (MRC video).</li>
+<li><strong>Tracker classification via the Disconnect dataset</strong> (4,438 domains bundled) with <strong>owner-collapse</strong> → <code>tracker_entity_count</code>, <code>tracker_categories</code>. (Full DuckDuckGo Tracker Radar — thousands of files — remains a heavier drop-in.)</li>
+<li><strong>SupplyChain (schain) validation</strong> — Prebid-declared schain captured (<code>schain_present</code>/<code>schain_complete</code>/<code>schain_node_count</code>); each hop's <code>asi</code> validated against ads.txt (<code>schain_valid</code>). Full sid==seller_id still needs the bid-stream.</li>
+</ul>
+<h3 id="done-static-sellersjson-cross-resolution">✅ Done (static) — sellers.json cross-resolution</h3>
+<ul>
+<li>ads.txt accounts resolved against each ad system's <code>sellers.json</code> (global 7-day cache, streaming-capped, top-30 systems): <code>total_supply_paths</code>, <code>resolved_sellers</code>, <code>seller_resolution_rate</code>, <code>intermediary_ratio</code>, <code>confidential_sellers</code>, <code>direct_domain_match</code>; folded into the <code>supply_chain</code> score. <em>(Huge sellers.json files — e.g. Google's — exceed the 15MB cap and are recorded as present-but-too-large rather than resolved; raise <code>AI_SELLERS_JSON_MAX_BYTES</code> to include them.)</em></li>
+</ul>
+<h3 id="done-givt-style-geometric-validity">✅ Done — GIVT-style geometric validity</h3>
+<ul>
+<li>Served-but-not-viewable detection on filled ad slots: <code>hidden_ad_count</code>, <code>tiny_ad_count</code> (1×1), <code>offscreen_ad_count</code>, <code>stacked_ad_count</code>, <code>suspicious_ad_count</code> (folded into <code>ad_experience</code>). <em>(The traffic-source side of GIVT — data-center IPs, known bots, prefetch — needs request-log/IP data and is out of scope in-house.)</em></li>
+</ul>
+<h3 id="done-embedding-content-classifier">✅ Done — embedding content classifier</h3>
+<ul>
+<li><code>content_category</code> + brand-suitability now use <strong>zero-shot static embeddings</strong> (model2vec) with keyword fallback. Fixes the keyword classifier's topical false-positives (e.g. an article <em>about</em> advertising no longer flags "adult"). Limitation: embeddings judge topic, so crime/violence <em>reporting</em> can still land at elevated suitability tiers; a fine-tuned/larger model would separate report-vs-promote.</li>
+</ul>
+<h3 id="out-of-scope-in-house-need-bid-stream-external-data">Out of scope in-house (need bid-stream / external data)</h3>
+<ul>
+<li><strong>Full 3-way schain validation</strong> (sid == sellers.json seller_id), <strong>ID absorption rate</strong>, <strong>GPID adoption</strong> — require RTB bid-stream access.</li>
+<li><strong>Real-user (field) INP / CWV</strong> — requires RUM, not a synthetic lab scan.</li>
+<li><strong>Paid-traffic dependence</strong> (Jounce/DeepSee primary MFA axis) — needs traffic-source data; <strong>excluded by project decision</strong> (our MFA is on-page ad-load only).</li>
+<li><strong>SIVT/fraud, full attention models</strong> (IAS/DV proprietary), <strong>carbon/gCO2PM</strong> (Scope3 model).</li>
+</ul>
+<h3 id="architecture">Architecture</h3>
+<p>Two render planes: <strong>in-page</strong> (<code>page.evaluate</code> — geometry, viewability, consent APIs, prebid, video) and <strong>CDP</strong> (<code>Network</code>/<code>Performance</code> — authoritative bytes, requests, cookies, CPU). Consent APIs (<code>__tcfapi</code>/<code>__gpp</code>) are in-page only; bytes/cookies are CDP only.</p></main></body></html>

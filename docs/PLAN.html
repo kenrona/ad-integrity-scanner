@@ -1,0 +1,268 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ad Integrity Scanner — Design & Plan</title><style>
+:root{--bg:#0f1320;--panel:#161b2b;--card:#1a2032;--ink:#e7ecf5;--mut:#8a97b3;
+--acc:#5b8cff;--bd:#283150;--ok:#3ecf8e;--code:#0d1120;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,sans-serif}
+a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+#wrap{display:flex;min-height:100vh}
+#nav{position:sticky;top:0;align-self:flex-start;width:240px;height:100vh;overflow:auto;
+background:var(--panel);border-right:1px solid var(--bd);padding:22px 16px}
+#nav h1{font-size:15px;margin:0 0 2px}#nav .tag{color:var(--mut);font-size:12px;margin-bottom:18px}
+#nav a{display:block;color:var(--ink);padding:7px 10px;border-radius:7px;font-size:14px}
+#nav a:hover{background:var(--card);text-decoration:none}
+#nav a.doc{font-weight:600;margin-top:12px}
+#nav a.sub{color:var(--mut);font-size:13px;padding-left:20px}
+main{flex:1;max-width:920px;padding:40px 48px 80px}
+section{display:none}section.active{display:block}
+h1,h2,h3{line-height:1.3}h1{font-size:26px;border-bottom:1px solid var(--bd);padding-bottom:10px}
+h2{font-size:21px;margin-top:34px;border-bottom:1px solid var(--bd);padding-bottom:6px}
+h3{font-size:17px;margin-top:24px;color:#cdd6ea}
+code{background:var(--code);padding:2px 6px;border-radius:5px;font-size:13px;
+font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+pre{background:var(--code);border:1px solid var(--bd);border-radius:10px;padding:14px 16px;overflow:auto}
+pre code{background:none;padding:0}
+blockquote{border-left:3px solid var(--acc);margin:14px 0;padding:6px 16px;background:var(--card);
+border-radius:0 8px 8px 0;color:#cdd6ea}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+th,td{border:1px solid var(--bd);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--card);color:#cdd6ea}
+tr:nth-child(even) td{background:#141a29}
+hr{border:0;border-top:1px solid var(--bd);margin:28px 0}
+.banner{background:linear-gradient(90deg,#1a2032,#161b2b);border:1px solid var(--bd);
+border-radius:12px;padding:16px 20px;margin-bottom:26px}
+.banner b{color:var(--ok)}
+@media(max-width:760px){#nav{display:none}main{padding:24px}}
+
+main{margin:0 auto}
+</style></head>
+<body><main><h1 id="ad-environment-integrity-scoring-build-plan">Ad Environment Integrity Scoring — Build Plan</h1>
+<p><strong>Goal:</strong> A local service that accepts a complete URL at an endpoint, scans the page + its domain, computes a robust set of "integrity" metrics about the ad environment that display <strong>and OLV/video</strong> ads would run in, and persists <code>{url → metrics + scores}</code> to a local database. Built to run <strong>on your machine</strong>: ~10k URLs/day for testing, scaling to <strong>~1M URLs/day</strong>. No cloud, no paid vendors.</p>
+<p><strong>Confirmed decisions (2026-06-19):</strong>
+- <strong>Runs locally.</strong> Single machine. 10k/day test → 1M/day target (~12 URLs/sec avg). Architecture maps cleanly to AWS later, but zero cloud dependency now.
+- <strong>Hybrid scan</strong> — cheap static fetch on <em>every</em> URL; headless render (Playwright) on a <em>sampled/prioritized</em> subset.
+- <strong>Async fire-and-forget</strong> endpoint — <code>POST {url}</code> → <code>202 Accepted {scan_id}</code> → local queue → workers → DB.
+- <strong>Input is just the complete URL.</strong> No other metadata supplied.
+- <strong>In-house only, no vendors.</strong> Open data/specs only (IAB ads.txt/sellers.json, Prebid catalog, IAB Content Taxonomy, Core Web Vitals).
+- <strong>URLs are page-level</strong> (specific articles/pages). Domain-level signals are cached and shared across pages of a domain.
+- <strong>MFA = on-page ad load.</strong> Detected purely from how many ads are on the page + density/clutter/refresh. <strong>No traffic-source / arbitrage data</strong> (explicitly out).
+- <strong>Tiered TTL.</strong> Domain signals cached ~24h; page scores cached longer (~7d). Repeat sends inside TTL return stored result; older → rescan.
+- <strong>Reads are batch/analytics.</strong> No low-latency read API in v1; consumers query the DB directly.
+- <strong>Display and video weighted equally.</strong> Full instrumentation of both.</p>
+<hr />
+<h2 id="1-strategic-grounding-from-competitive-research">1. Strategic grounding (from competitive research)</h2>
+<p>Three camps in this market; we borrow from all three:</p>
+<table>
+<thead>
+<tr>
+<th>Camp</th>
+<th>Players</th>
+<th>What we take</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Metadata / media-telemetry scanners</strong></td>
+<td>Sincera (→ The Trade Desk, Jan 2025; OpenSincera free API, ~400k publishers)</td>
+<td>The metric suite: <strong>ads-to-content ratio (A2CR)</strong>, <strong>ads-in-view</strong>, <strong>ad refresh rate</strong>, <strong>page weight</strong>, prebid/supply-path counts. A transparent suite, not one black-box score.</td>
+</tr>
+<tr>
+<td><strong>MFA classifiers</strong></td>
+<td>Jounce Media, DeepSee.io, ANA studies</td>
+<td>Ad <strong>density + refresh</strong> as MFA signals. <em>(We deliberately use the ad-load axis only — not the paid-traffic axis those vendors emphasize, per your decision.)</em></td>
+</tr>
+<tr>
+<td><strong>Verification vendors</strong></td>
+<td>IAS, DoubleVerify, HUMAN</td>
+<td>Signal <em>categories</em> (viewability, brand suitability) as reference definitions.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Useful reference points:</strong>
+- Scope3 flags a "problematic placement" as <strong>ad refresh &lt; 15s</strong> or <strong>rendering out of view</strong> — concrete thresholds we can adopt.
+- Sincera <strong>A2CR</strong>: compares creative dims vs ad-slot dims and takes the <strong>larger</strong> (captures reserved ad real estate regardless of fill).
+- HTTP Archive 2024 medians as page-weight baselines: <strong>~2.6 MB</strong>, <strong>71 requests</strong>, <strong>27–66 third-party domains</strong> (desktop).
+- Standards to target: ads.txt <strong>1.1</strong> / sellers.json / SupplyChain object; IAB Content Taxonomy <strong>3.1</strong>; Core Web Vitals (<strong>INP</strong> replaced FID; LCP ≤2.5s / INP ≤200ms / CLS ≤0.1); TCF <strong>v2.3</strong> / GPP / GPC.</p>
+<hr />
+<h2 id="2-metric-taxonomy-signal-tier">2. Metric taxonomy (signal → tier)</h2>
+<p><strong>[S]</strong> = static HTTP (every URL). <strong>[R]</strong> = headless render (sampled subset). Domain-level <strong>[S]</strong> signals computed once per domain and cached (24h TTL).</p>
+<h3 id="a-supply-chain-transparency-domain-level-s-cached">A. Supply-chain transparency  <em>(domain-level, [S], cached)</em></h3>
+<ul>
+<li>ads.txt / app-ads.txt present? parseable? line count.</li>
+<li>DIRECT vs RESELLER ratio; reseller depth; # distinct supply paths; # authorized sellers.</li>
+<li>sellers.json resolution: <code>seller_type</code> PUBLISHER / INTERMEDIARY / BOTH; <code>is_confidential</code> rate.</li>
+<li>SupplyChain object hygiene where observable (schain depth, <code>complete=1</code>).</li>
+</ul>
+<h3 id="b-ad-clutter-density-experience-page-level-drives-mfa">B. Ad clutter / density / experience  <em>(page-level)</em> — <strong>drives MFA</strong></h3>
+<ul>
+<li><strong>[S] precursors:</strong> hardcoded GPT/Prebid tags in HTML; declared ad-network script srcs; # ad-related third-party domains.</li>
+<li><strong>[R] truth:</strong> rendered <strong>ad-slot count</strong>; <strong>A2CR</strong> (ad pixels vs content pixels, larger of slot/creative); above-the-fold ad count; <strong>ads-in-view</strong>; sticky/anchored/interstitial detection; <strong>ad refresh rate</strong> (dwell-window observation; flag &lt;15s).</li>
+</ul>
+<h3 id="c-video-olv-page-level-r-equal-weight-to-display">C. Video / OLV  <em>(page-level, [R])</em> — <strong>equal weight to display</strong></h3>
+<ul>
+<li>Video player presence + framework (e.g. JW Player, Video.js, Brightcove, native <code>&lt;video&gt;</code>).</li>
+<li>Player size/geometry; above-the-fold?</li>
+<li><strong>Autoplay / muted-autoplay</strong> behavior.</li>
+<li><strong>Instream vs outstream</strong> (content video vs ad-only floating/in-feed player).</li>
+<li><strong>VAST / VPAID</strong> ad tags observed in network calls; # video demand partners.</li>
+<li>Video ad slot count; floating/sticky video.</li>
+</ul>
+<h3 id="d-mfa-ad-load-risk-composite-r">D. MFA / ad-load risk  <em>(composite, [R])</em></h3>
+<ul>
+<li>Built <strong>only</strong> from ad density + A2CR + above-fold ad count + refresh + (video ad-load) + templated/thin-content + slideshow/gallery pagination + infinite scroll. <strong>No traffic-source signals.</strong></li>
+</ul>
+<h3 id="e-page-quality-performance-page-level">E. Page quality &amp; performance  <em>(page-level)</em></h3>
+<ul>
+<li><strong>[R]:</strong> real page weight &amp; request count; <strong>LCP, CLS</strong> (web-vitals lib); <strong>TBT</strong> as INP proxy; # third-party + ad-tech domains; main-thread load.</li>
+<li><strong>[R] content:</strong> visible word count, original-vs-aggregated heuristics, <strong>IAB Content Taxonomy 3.1</strong> classification, brand-suitability (GARM-style 11 categories / 4 risk tiers).</li>
+</ul>
+<h3 id="f-privacy-consent-page-level-r">F. Privacy / consent  <em>(page-level, [R])</em></h3>
+<ul>
+<li>CMP via <code>window.__tcfapi</code> (TCF v2.3) / <code>window.__gpp</code> (GPP); consent-string validity; <strong>GPC</strong>.</li>
+</ul>
+<h3 id="g-ad-tech-footprint-page-level-r">G. Ad-tech footprint  <em>(page-level, [R])</em></h3>
+<ul>
+<li><code>window.pbjs</code> bidders (<code>getBidResponses()</code>/<code>getEvents()</code> → bidderCode); <code>window.googletag.getSlots()</code>; resolve bidder codes → SSPs via Prebid catalog; # demand partners; header-bidding wrapper fingerprint.</li>
+</ul>
+<hr />
+<h2 id="3-scoring-model">3. Scoring model</h2>
+<p>Transparent <strong>per-category sub-scores (0–100) + a config-weighted composite Integrity Score</strong> — never a single opaque number. Each sub-score ships with the raw signals behind it.</p>
+<table>
+<thead>
+<tr>
+<th>Sub-score</th>
+<th>Drivers</th>
+<th>Phase</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Supply-chain transparency</td>
+<td>ads.txt/sellers.json hygiene, reseller depth</td>
+<td>1 (static)</td>
+</tr>
+<tr>
+<td>Ad experience</td>
+<td>A2CR, ads-in-view, refresh, sticky/interstitial</td>
+<td>2 (render)</td>
+</tr>
+<tr>
+<td>Video / OLV</td>
+<td>player, autoplay, instream/outstream, VAST, video ad-load</td>
+<td>2 (render)</td>
+</tr>
+<tr>
+<td>MFA / ad-load risk</td>
+<td>density + refresh + content templating</td>
+<td>3</td>
+</tr>
+<tr>
+<td>Page quality &amp; performance</td>
+<td>CWV, weight, 3p footprint, content quality</td>
+<td>2–3</td>
+</tr>
+<tr>
+<td>Privacy/consent</td>
+<td>CMP/TCF/GPP/GPC</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Brand suitability</td>
+<td>content category vs risk tiers</td>
+<td>3</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Composite</strong> = configurable weighted blend (weights in config, tunable without redeploy). Display and video equally weighted.</li>
+<li><strong>Versioned:</strong> every record stamps <code>scoring_version</code> + <code>scanner_version</code>.</li>
+<li><strong>Confidence field:</strong> static-only records carry lower confidence than render-backed ones; surfaced explicitly.</li>
+</ul>
+<hr />
+<h2 id="4-architecture-local-first">4. Architecture (local-first)</h2>
+<pre><code>  POST /scan {url}            ┌───────────────────────────────────────────┐
+        │                     │ API server (FastAPI / uvicorn)            │
+        ▼                     │  • validate + normalize URL               │
+   202 {scan_id}  ◄───────────│  • dedup vs scan_ledger (tiered TTL)      │
+                              │  • enqueue → Redis queue (static)         │
+                              └───────────────┬───────────────────────────┘
+                                              │
+                       ┌──────────────────────▼───────────────────────┐
+                       │ Static workers (async httpx pool)             │  high concurrency
+                       │  • fetch ads.txt/app-ads.txt/sellers.json/    │
+                       │    robots/headers/raw HTML                    │
+                       │  • domain cache (Postgres, 24h TTL)           │
+                       │  • compute [S] signals                        │
+                       │  • render needed? (sampling/priority policy)  │──► Redis queue (render)
+                       └──────────────────────┬────────────────────────┘
+                                              │ write signals
+                       ┌──────────────────────▼────────────────────────┐
+                       │ Render workers (persistent Playwright pool)    │
+                       │  • Chromium, N contexts, block img/font/css    │
+                       │  • intercept network (VAST/exchange calls)     │
+                       │  • read pbjs/googletag/__tcfapi/__gpp          │
+                       │  • ad slots / A2CR / refresh / video / CWV     │
+                       └──────────────────────┬─────────────────────────┘
+                                              │ write signals
+                       ┌──────────────────────▼─────────────────────────┐
+                       │ Scoring worker → computes sub-scores+composite, │
+                       │ writes final record                              │
+                       └──────────────────────┬─────────────────────────┘
+                                              ▼
+                       ┌────────────────────────────────────────────────┐
+                       │ PostgreSQL (local, via Docker)                  │
+                       │  • scan_results  • domain_signals  • scan_ledger│
+                       │  + optional parquet/DuckDB export for analytics │
+                       └────────────────────────────────────────────────┘
+</code></pre>
+<p><strong>Recommended stack (all local):</strong>
+- <strong>Language: Python.</strong> Rich for parsing/content-analysis/scoring, first-class <code>playwright</code>, and easy analytics (DuckDB/pandas). <em>(Node is a viable alternative if you prefer JS-native pbjs eval — say the word.)</em>
+- <strong>API: FastAPI + uvicorn</strong> — async, trivial <code>202</code> + enqueue.
+- <strong>Queue: PostgreSQL job table</strong> (<code>FOR UPDATE SKIP LOCKED</code>), not Redis. The machine already runs <code>postgresql@17</code> and has no Docker/Redis, so a PG-backed queue gives the same claim-once semantics with zero extra infra and easily covers 1M/day (~12/sec). Jobs carry <code>attempts</code>; failures requeue up to <code>AI_MAX_ATTEMPTS</code> then park as <code>error</code>. Two logical queues via the <code>tier</code> column: <code>static</code> (high volume) and <code>render</code> (gated). <strong>Swap to Redis/arq later</strong> behind <code>app/queue.py</code> only if scaling out to multiple machines.
+- <strong>Static fetch: httpx/aiohttp</strong> — async, thousands of concurrent fetches on one box.
+- <strong>Render: Playwright (Chromium), persistent browser + recycled contexts.</strong> Block images/fonts/CSS (~40–60% memory saving). Never launch a browser per request.
+- <strong>DB: PostgreSQL</strong> (Docker) as operational store; periodic <strong>parquet export queried via DuckDB</strong> for batch analytics (matches your "batch/analytics reads" answer — no read API needed).
+- <strong>Orchestration: none required</strong> — uses the local <code>postgresql@17</code>; API + workers run as native Python processes. (No Docker/Redis dependency.)</p>
+<p><strong>Why this fits 1M/day on one machine:</strong> 1M/day ≈ 12 URLs/sec average. Static tier is I/O-bound and trivially handles that. Render at ~5–10% sampling ≈ 50–100k/day ≈ ~1/sec → 2–4 Chromium contexts suffice. Comfortable headroom on a modern laptop/desktop.</p>
+<hr />
+<h2 id="5-data-model-sketch">5. Data model (sketch)</h2>
+<p><strong><code>scan_results</code></strong> (Postgres): <code>url_hash</code> (PK), <code>url</code>, <code>domain</code>, <code>scanned_at</code>, <code>scan_tier</code> (static|render), <code>confidence</code>, <code>signals</code> (JSONB), <code>metrics</code> (JSONB), <code>sub_scores</code> (JSONB), <code>integrity_score</code>, <code>scoring_version</code>, <code>scanner_version</code>.</p>
+<p><strong><code>domain_signals</code></strong> (Postgres): <code>domain</code> (PK), ads.txt/sellers.json parse (JSONB), supply-path stats, <code>expires_at</code> (24h TTL).</p>
+<p><strong><code>scan_ledger</code></strong> (Postgres): <code>url_hash</code> (PK), <code>last_scanned</code>, <code>expires_at</code> (page TTL ~7d) — powers tiered-TTL dedup.</p>
+<p><strong>Analytics:</strong> scheduled export of <code>scan_results</code> → parquet on disk → DuckDB for ad-hoc/bulk queries.</p>
+<hr />
+<h2 id="6-scale-sizing">6. Scale &amp; sizing</h2>
+<ul>
+<li><strong>Test:</strong> 10k/day (~0.1/sec). Single process, in-process queue fine; SQLite acceptable but start on Postgres to avoid a later migration.</li>
+<li><strong>Target:</strong> 1M/day (~12/sec avg). Redis queue + static worker pool (async) + 2–4 Playwright contexts + Postgres. All on one machine.</li>
+<li><strong>Sampling/priority policy</strong> (config): always render new/unknown domains + suspected high-ad-load pages + a rolling re-scan; static-only otherwise. <strong>Log what was skipped</strong> so static-only is never mistaken for fully measured.</li>
+<li><strong>Backpressure:</strong> Redis queue depth + worker concurrency caps; render queue is the throttle point.</li>
+</ul>
+<hr />
+<h2 id="7-phased-roadmap">7. Phased roadmap</h2>
+<ul>
+<li><strong>Phase 0 — Foundations [DONE]:</strong> FastAPI <code>/scan</code> returning 202, URL normalization, <code>scan_ledger</code> dedup w/ tiered TTL, Postgres-backed queue plumbing (with retry/max-attempts), static-worker skeleton, <code>GET /scan/{id}</code>, <code>/stats</code>, structured logging. (Replaced the originally-planned docker-compose Postgres+Redis with the local PG-queue decision above.)</li>
+<li><strong>Phase 1 — Static tier + first scores [DONE]:</strong> ads.txt/app-ads.txt/robots/sellers.json + headers + HTML parsing (ad-tech footprint, content, video hints) → supply-chain sub-score + provisional composite + static page signals; per-domain cache (24h TTL). End-to-end <code>url → DB</code> verified on live publishers. <em>(ad-tech fingerprints match code/URLs only, not article prose, to avoid brand-mention false positives; true sellers.json cross-resolution per ad-system domain deferred.)</em></li>
+<li><strong>Phase 2 — Render tier [DONE]:</strong> persistent Playwright/Chromium pool (blocks img/font/media), pbjs/googletag/CMP via <code>page.evaluate</code>, ad-slot geometry/A2CR/above-fold/refresh, <strong>video/OLV</strong> (autoplay), CWV (LCP/CLS) + page weight via Resource Timing → ad-experience + video + privacy + performance sub-scores; weighted composite + 0.85 confidence. Sampling gate (<code>AI_RENDER_SAMPLE_RATE</code>) enqueues <code>render</code> jobs from the static tier; render worker merges + re-scores the same scan_id. Verified live (theverge.com, wikipedia.org). <em>(INP not measured — needs real interaction; deferred. Refresh detection is best-effort via GPT slotRenderEnded during the dwell.)</em></li>
+<li><strong>Phase 3 — MFA &amp; content [DONE]:</strong> MFA / ad-load risk sub-score (A2CR + slots + above-fold + refresh from render; thin-content + link-density secondary; <strong>no traffic-source data</strong> per decision), content-quality/templating metrics, IAB-style content category, GARM-style brand-suitability tier → folded into a 7-way weighted composite. Verified live. <em>(Category + suitability are an in-house keyword classifier flagged <code>heuristic</code>; thresholds biased against flagging since word-matching can't distinguish "about X" from "is X". A future ML/embedding pass would sharpen these.)</em></li>
+<li><strong>Phase 4 — Hardening &amp; analytics [DONE]:</strong> maintenance worker (<code>app/workers/maintenance.py</code>) with <strong>visibility-timeout reaper</strong> (requeue/park stuck <code>processing</code> jobs), <strong>scan_queue pruning</strong> (bounds growth), and an opt-in <strong>TTL re-scan scheduler</strong>; <strong>Parquet/DuckDB analytics export</strong> (<code>app/analytics.py</code>, CLI <code>export</code>/<code>summary</code>) as the batch read path; <strong>browser GUI</strong> (<code>app/static/index.html</code> at <code>/</code>) to submit a file of URLs one at a time with live progress + queue stats. Verified live. <em>(Throughput-to-1M/day is validated by design/sampling math + concurrent workers rather than a network load test against real publishers; raw-signals→lake offload is available via export, Postgres still keeps full signals hot — a hard offload/trim policy is left as a config choice.)</em></li>
+</ul>
+<p><strong>Code review (pre-Phase-4) — applied:</strong> SSRF guard on every fetch + redirect hop and on render (blocks private/loopback/link-local/metadata; <code>app/ssrf.py</code>); streaming download size cap (no full-body OOM); Chromium sandbox kept ON; concurrent batch processing in both workers (static fan-out + real use of render concurrency; DB conns no longer held during network I/O); parallel domain-file fetches; dropped the wasteful publisher <code>sellers.json</code> fetch; URL length cap. Residual notes: DNS-rebinding not fully closed (pin IP / egress-filter in prod); <code>/scan</code> needs auth + rate-limit if exposed; stored URLs may carry PII.</p>
+<hr />
+<h2 id="8-resolved-no-open-questions">8. Resolved — no open questions</h2>
+<p>All scoping decisions captured above. <strong>Language: Python</strong> (confirmed — the cost center is Chromium, which is language-agnostic). Phases 0–4 plus a security/efficiency review and a browser GUI are all built and verified.</p>
+<h3 id="post-phase-4-metrics-expansion-toward-commercial-parity-all-done">Post-Phase-4 — metrics expansion toward commercial parity (all DONE)</h3>
+<p>The per-phase caveats above were superseded by a metrics-v2 build (grounded in a competitive parity catalog):
+- <strong>CDP plane</strong> — authoritative page weight / requests / cookies / CPU (Resource-Timing under-counted ad bytes ~2×); <strong>multi-source ad detection</strong> (GPT runtime + ad-host iframes + markers, not GPT-only); images kept during render so page weight is accurate.
+- <strong>Deep ad-layout geometry</strong> — ad sizes (IAB), above/below-fold, inter-ad gaps, sticky (CSS + <strong>behavioral</strong>), interstitial, first-screen whitespace, ad density per screen/1000px, ad-attributable CLS.
+- <strong>MRC time-weighted viewability</strong> (ads-in-view / ads-viewable-1s); <strong>GIVT</strong> validity (hidden/tiny/offscreen/stacked); accurate refresh.
+- <strong>CWV</strong>: CLS <strong>median-of-N</strong> (<code>AI_RENDER_SAMPLES</code>); <strong>synthetic INP</strong> (lab, scripted interaction — not field RUM).
+- <strong>sellers.json cross-resolution</strong> (global per-ad-system cache) → supply-path transparency; <strong>schain validation</strong> (Prebid schain <code>asi</code> vs ads.txt).
+- <strong>Tracker classification</strong> via the bundled Disconnect dataset (owner-collapsed); <strong>CMP detection</strong> via live API + locator iframes + vendor scripts (region-robust); <strong>realistic Chrome UA</strong> (bot-protected inventory).
+- <strong>Embedding content / brand-suitability classifier</strong> (model2vec, keyword fallback) — replaced the keyword-only classifier; bot-blocked pages classify from the <strong>rendered DOM</strong>.
+- Every derived score ships a <strong><code>score_breakdown</code></strong> of raw inputs. Full field reference: <a href="./DATA_DICTIONARY.md"><code>DATA_DICTIONARY.md</code></a>.
+- <strong>Ground-truth accuracy suite</strong> (<code>tests/accuracy/</code>, ~200 fixtures) — 100% on deterministic metrics.</p>
+<p><strong>Remaining work is external-data-dependent only</strong> (full 3-way schain <code>sid</code> match, ID absorption, GPID, paid-traffic dependence, SIVT/fraud, attention, carbon, real-user field CWV/INP) — out of scope for an in-house scanner.</p>
+<p><strong>Current composite weights</strong> (in <code>app/scoring.py</code>, renormalized over present sub-scores): supply_chain 0.20, ad_experience 0.22, mfa 0.18, performance 0.12, video 0.10, brand_suitability 0.10, privacy 0.08.</p></main></body></html>
