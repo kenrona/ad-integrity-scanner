@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql://localhost:5432/ad_integrity"
     db_pool_min: int = 2
-    db_pool_max: int = 20  # >= static_worker_concurrency + headroom
+    db_pool_max: int = 40  # >= static + render concurrency + headroom (tuned for M4/32GB)
 
     page_ttl_seconds: int = 7 * 24 * 3600
     domain_ttl_seconds: int = 24 * 3600
@@ -46,8 +46,8 @@ class Settings(BaseSettings):
     # "auto" = embedding model if available else keyword; "ml"; "keyword".
     content_classifier: str = "auto"
 
-    static_worker_batch: int = 20
-    static_worker_concurrency: int = 8   # jobs processed in parallel (I/O-bound)
+    static_worker_batch: int = 32
+    static_worker_concurrency: int = 24  # jobs processed in parallel (I/O-bound; tuned for M4)
     static_worker_poll_ms: int = 250
     max_attempts: int = 3          # claims per job before it is parked as 'error'
 
@@ -55,13 +55,13 @@ class Settings(BaseSettings):
     # also get a render. Default 1.0 for local dev; production would use ~0.05-0.1.
     render_enabled: bool = True
     render_sample_rate: float = 1.0
-    render_concurrency: int = 2
+    render_concurrency: int = 6   # parallel browser contexts (tuned for M4/10-core/32GB)
     render_dwell_ms: int = 8000   # longer dwell improves refresh + viewability capture
     render_samples: int = 1       # >1 = render N times, take median CLS (N× cost)
     # Resource types aborted during render. Default keeps images (accurate page
     # weight); add 'image' to cut bandwidth at the cost of weight accuracy.
     render_block_resources: str = "font,media"
-    render_worker_batch: int = 4
+    render_worker_batch: int = 8  # >= render_concurrency so a poll can fill the pool
 
     # Maintenance worker (Phase 4 hardening).
     visibility_timeout_seconds: int = 300    # processing jobs older than this are reaped
