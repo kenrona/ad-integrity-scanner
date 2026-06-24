@@ -18,7 +18,7 @@ import httpx
 
 from app import fetch, queue, results, signals_static
 from app.config import Settings, get_settings
-from app.db import close_pool, init_pool
+from app.db import close_pool, init_pool, with_retry
 from app.logging_config import configure_logging, get_logger, kv
 from app.queue import Job
 from app.scoring import score_static
@@ -46,13 +46,19 @@ async def _process(pool: asyncpg.Pool, client: httpx.AsyncClient, job: Job,
                    settings: Settings) -> None:
     try:
         result = await _scan_static(pool, client, job)
-        async with pool.acquire() as conn:
-            await results.persist(conn, job, result, settings)
-            if _needs_render(settings):
-                await queue.enqueue(
-                    conn, scan_id=job.scan_id, url_hash=job.url_hash,
-                    url=job.url, domain=job.domain, tier="render",
-                )
+
+        # Retry persist (+ render enqueue) on transient deadlock/serialization so
+        # the completed static scan is not discarded under heavy write contention.
+        async def _do_persist() -> None:
+            async with pool.acquire() as conn:
+                await results.persist(conn, job, result, settings)
+                if _needs_render(settings):
+                    await queue.enqueue(
+                        conn, scan_id=job.scan_id, url_hash=job.url_hash,
+                        url=job.url, domain=job.domain, tier="render",
+                    )
+
+        await with_retry(_do_persist)
         log.info("scanned %s", kv(
             scan_id=job.scan_id, domain=job.domain,
             supply=result["sub_scores"].get("supply_chain"),
@@ -76,8 +82,11 @@ async def _run_once(
     own_client = client is None
     if own_client:
         client = fetch.make_client()
-    async with pool.acquire() as conn:
-        jobs = await queue.claim(conn, tier="static", batch=batch)
+    async def _do_claim():
+        async with pool.acquire() as conn:
+            return await queue.claim(conn, tier="static", batch=batch)
+
+    jobs = await with_retry(_do_claim)
     # Process the batch concurrently — this tier is I/O-bound, so fan-out (capped
     # by a semaphore) is the throughput win over awaiting jobs one at a time.
     sem = asyncio.Semaphore(settings.static_worker_concurrency)
@@ -97,7 +106,7 @@ async def _run_once(
 async def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
-    pool = await init_pool()
+    pool = await init_pool(apply_schema=False)  # schema owned by the app; avoid DDL deadlocks
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -109,7 +118,11 @@ async def main() -> None:
                               render_rate=settings.render_sample_rate))
     try:
         while not _stop.is_set():
-            n = await _run_once(pool, settings.static_worker_batch, client)
+            try:
+                n = await _run_once(pool, settings.static_worker_batch, client)
+            except Exception as e:  # noqa: BLE001 — never die on a transient error
+                log.warning("static loop iteration failed err=%r", e)
+                n = 0
             if n == 0:
                 try:
                     await asyncio.wait_for(

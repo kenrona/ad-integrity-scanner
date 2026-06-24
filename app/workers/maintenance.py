@@ -50,7 +50,7 @@ async def run_once(pool: asyncpg.Pool, settings: Settings) -> dict:
 async def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
-    pool = await init_pool()
+    pool = await init_pool(apply_schema=False)  # schema owned by the app; avoid DDL deadlocks
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

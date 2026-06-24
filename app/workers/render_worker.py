@@ -17,7 +17,7 @@ import asyncpg
 
 from app import queue, results
 from app.config import get_settings
-from app.db import close_pool, init_pool
+from app.db import close_pool, init_pool, with_retry
 from app.logging_config import configure_logging, get_logger, kv
 from app.queue import Job
 from app.render.browser import RenderPool
@@ -70,8 +70,16 @@ async def _scan_render(pool: asyncpg.Pool, render_pool: RenderPool, job: Job) ->
     settings = get_settings()
     async with pool.acquire() as conn:
         signals = await _load_static_signals(conn, job.scan_id)
-    render_data = await render_page_sampled(
-        render_pool, job.url, dwell_ms=settings.render_dwell_ms, samples=settings.render_samples)
+    # Hard per-render cap: a wedged page (hung goto/evaluate) is cancelled so it
+    # can't hold a concurrency slot indefinitely. Cancellation propagates into
+    # RenderPool.page()'s `finally`, which closes the context and frees the slot.
+    render_data = await asyncio.wait_for(
+        render_page_sampled(
+            render_pool, job.url, dwell_ms=settings.render_dwell_ms,
+            samples=settings.render_samples,
+            nav_timeout_ms=settings.render_nav_timeout_ms),
+        timeout=settings.render_timeout_seconds,
+    )
     signals["render"] = render_data
     if render_data.get("ok"):
         _backfill_content(signals, render_data)
@@ -82,8 +90,14 @@ async def _process(pool: asyncpg.Pool, render_pool: RenderPool, job: Job) -> Non
     settings = get_settings()
     try:
         result = await _scan_render(pool, render_pool, job)
-        async with pool.acquire() as conn:
-            await results.persist(conn, job, result, settings)
+
+        # Retry persist on transient deadlock/serialization so a successful (and
+        # expensive ~10s) render is not thrown away and re-done.
+        async def _do_persist() -> None:
+            async with pool.acquire() as conn:
+                await results.persist(conn, job, result, settings)
+
+        await with_retry(_do_persist)
         m = result["metrics"]
         log.info("rendered %s", kv(
             scan_id=job.scan_id, domain=job.domain, tier=result["scan_tier"],
@@ -102,8 +116,11 @@ async def _process(pool: asyncpg.Pool, render_pool: RenderPool, job: Job) -> Non
 
 
 async def _run_once(pool: asyncpg.Pool, render_pool: RenderPool, batch: int) -> int:
-    async with pool.acquire() as conn:
-        jobs = await queue.claim(conn, tier="render", batch=batch)
+    async def _do_claim():
+        async with pool.acquire() as conn:
+            return await queue.claim(conn, tier="render", batch=batch)
+
+    jobs = await with_retry(_do_claim)
     # Launch all claimed renders concurrently; RenderPool's semaphore caps how
     # many browser contexts actually run at once (AI_RENDER_CONCURRENCY).
     await asyncio.gather(*(_process(pool, render_pool, j) for j in jobs))
@@ -113,9 +130,10 @@ async def _run_once(pool: asyncpg.Pool, render_pool: RenderPool, batch: int) -> 
 async def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
-    pool = await init_pool()
+    pool = await init_pool(apply_schema=False)  # schema owned by the app; avoid DDL deadlocks
     blocked = {t.strip() for t in settings.render_block_resources.split(",") if t.strip()}
-    render_pool = RenderPool(concurrency=settings.render_concurrency, blocked_types=blocked)
+    render_pool = RenderPool(concurrency=settings.render_concurrency, blocked_types=blocked,
+                             browsers=settings.render_browsers)
     await render_pool.start()
 
     loop = asyncio.get_running_loop()
@@ -123,10 +141,15 @@ async def main() -> None:
         loop.add_signal_handler(sig, _stop.set)
 
     log.info("started %s", kv(concurrency=settings.render_concurrency,
+                              browsers=settings.render_browsers,
                               dwell_ms=settings.render_dwell_ms))
     try:
         while not _stop.is_set():
-            n = await _run_once(pool, render_pool, settings.render_worker_batch)
+            try:
+                n = await _run_once(pool, render_pool, settings.render_worker_batch)
+            except Exception as e:  # noqa: BLE001 — never die on a transient error
+                log.warning("render loop iteration failed err=%r", e)
+                n = 0
             if n == 0:
                 try:
                     await asyncio.wait_for(

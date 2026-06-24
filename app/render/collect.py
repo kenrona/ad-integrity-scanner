@@ -121,7 +121,8 @@ async def render_page(
 
 
 async def render_page_sampled(
-    pool: RenderPool, url: str, *, dwell_ms: int = 8000, samples: int = 1
+    pool: RenderPool, url: str, *, dwell_ms: int = 8000, samples: int = 1,
+    nav_timeout_ms: int = 25000,
 ) -> dict[str, Any]:
     """Render `samples` times and replace run-to-run-variable CLS with the median.
 
@@ -129,7 +130,7 @@ async def render_page_sampled(
     time); the median of N is far more stable. Other signals come from the first
     successful render. samples<=1 is a plain single render.
     """
-    base = await render_page(pool, url, dwell_ms=dwell_ms)
+    base = await render_page(pool, url, dwell_ms=dwell_ms, nav_timeout_ms=nav_timeout_ms)
     if samples <= 1 or not base.get("ok"):
         return base
     cls_vals = []
@@ -137,7 +138,7 @@ async def render_page_sampled(
     if c is not None:
         cls_vals.append(c)
     for _ in range(samples - 1):
-        r = await render_page(pool, url, dwell_ms=dwell_ms)
+        r = await render_page(pool, url, dwell_ms=dwell_ms, nav_timeout_ms=nav_timeout_ms)
         c = (r.get("cwv") or {}).get("cls") if r.get("ok") else None
         if c is not None:
             cls_vals.append(c)

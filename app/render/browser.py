@@ -1,12 +1,17 @@
-"""Persistent Playwright browser pool.
+"""Persistent Playwright browser pool (multi-browser).
 
-One Chromium process is launched for the worker's lifetime; each render gets a
-fresh (isolated) context. A semaphore caps concurrent contexts so memory stays
-bounded. Images/fonts/media are blocked to cut bandwidth + RAM while preserving
-CSS/JS (needed for layout geometry and ad execution).
+Launches `browsers` Chromium processes for the worker's lifetime and spreads up
+to `concurrency` total isolated contexts across them (least-loaded), so each
+browser serves ~concurrency/browsers contexts. A single browser bottlenecks
+beyond ~4 concurrent contexts because every render's request interception funnels
+through its one CDP connection; multiple browser processes give real parallelism.
+A global semaphore caps total concurrent contexts so memory stays bounded.
+Fonts/media are blocked by default to cut bandwidth+RAM while preserving CSS/JS
+(needed for layout geometry and ad execution); images are kept for page-weight.
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 
@@ -34,42 +39,66 @@ def _make_route_handler(blocked_types: set[str]):
     return _route_handler
 
 
+def _least_loaded(inflight: list[int]) -> int:
+    """Index of the browser with the fewest in-flight contexts (ties -> lowest)."""
+    best = 0
+    for i in range(1, len(inflight)):
+        if inflight[i] < inflight[best]:
+            best = i
+    return best
+
+
 class RenderPool:
-    def __init__(self, concurrency: int = 2, blocked_types: set[str] | None = None) -> None:
-        self._concurrency = concurrency
+    def __init__(self, concurrency: int = 2, blocked_types: set[str] | None = None,
+                 browsers: int = 1) -> None:
+        self._concurrency = max(1, concurrency)
+        self._n_browsers = max(1, browsers)
         # Default blocks fonts/media only — images are kept so page-weight stays
         # accurate (a headline metric). Pass {'image','font','media'} to trade
         # accuracy for lower bandwidth.
         self._blocked = blocked_types if blocked_types is not None else {"font", "media"}
         self._route = _make_route_handler(self._blocked)
         self._pw: Playwright | None = None
-        self._browser: Browser | None = None
-        self._sem: contextlib.AbstractAsyncContextManager | None = None
+        self._browsers: list[Browser] = []
+        self._inflight: list[int] = []      # per-browser active-context counts
+        self._sem: asyncio.Semaphore | None = None
 
     async def start(self) -> None:
-        import asyncio
         self._pw = await async_playwright().start()
         # Keep Chromium's sandbox ON — we render hostile pages, so --no-sandbox
         # would remove the last barrier between a browser exploit and the host.
-        self._browser = await self._pw.chromium.launch(
-            headless=True,
-            args=["--disable-dev-shm-usage"],
-        )
+        for _ in range(self._n_browsers):
+            self._browsers.append(await self._pw.chromium.launch(
+                headless=True,
+                args=["--disable-dev-shm-usage"],
+            ))
+        self._inflight = [0] * len(self._browsers)
         self._sem = asyncio.Semaphore(self._concurrency)
 
     async def stop(self) -> None:
-        if self._browser:
-            await self._browser.close()
+        for b in self._browsers:
+            try:
+                await b.close()
+            except Exception:  # noqa: BLE001 — best-effort teardown
+                pass
         if self._pw:
             await self._pw.stop()
-        self._browser = self._pw = None
+        self._browsers = []
+        self._inflight = []
+        self._pw = None
 
     @contextlib.asynccontextmanager
     async def page(self) -> AsyncIterator[Page]:
-        if not self._browser or not self._sem:
+        if not self._browsers or not self._sem:
             raise RuntimeError("RenderPool not started")
+        # Global cap on total contexts; pick the least-loaded browser so contexts
+        # spread evenly (~concurrency/browsers each). Index select + increment is
+        # atomic in single-threaded asyncio (no await between them).
         async with self._sem:
-            context = await self._browser.new_context(
+            idx = _least_loaded(self._inflight)
+            self._inflight[idx] += 1
+            browser = self._browsers[idx]
+            context = await browser.new_context(
                 user_agent=get_settings().user_agent,
                 viewport=_VIEWPORT,
                 java_script_enabled=True,
@@ -80,4 +109,7 @@ class RenderPool:
                 await page.add_init_script(INIT_JS)
                 yield page
             finally:
-                await context.close()
+                try:
+                    await context.close()
+                finally:
+                    self._inflight[idx] -= 1
