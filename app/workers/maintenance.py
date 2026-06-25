@@ -14,7 +14,7 @@ import signal
 
 import asyncpg
 
-from app import ledger, queue, service
+from app import ledger, queue, render_control, service
 from app.config import Settings, get_settings
 from app.db import close_pool, init_pool
 from app.logging_config import configure_logging, get_logger, kv
@@ -30,6 +30,10 @@ async def run_once(pool: asyncpg.Pool, settings: Settings) -> dict:
             max_attempts=settings.max_attempts,
         )
         pruned = await queue.prune(conn, settings.queue_retention_seconds)
+        # Adaptive render-timeout controller: escalate timeout / halt on high error rate.
+        ctrl = await render_control.evaluate(conn, settings)
+    if ctrl.get("halted"):
+        log.warning("render controller HALTED: %s", ctrl.get("reason"))
 
     rescanned = 0
     if settings.rescan_enabled:

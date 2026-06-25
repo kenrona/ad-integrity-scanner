@@ -15,7 +15,7 @@ import signal
 
 import asyncpg
 
-from app import queue, results
+from app import queue, render_control, results
 from app.config import get_settings
 from app.db import close_pool, init_pool, with_retry
 from app.logging_config import configure_logging, get_logger, kv
@@ -66,19 +66,20 @@ def _backfill_content(signals: dict, render_data: dict) -> None:
     }
 
 
-async def _scan_render(pool: asyncpg.Pool, render_pool: RenderPool, job: Job) -> dict:
+async def _scan_render(pool: asyncpg.Pool, render_pool: RenderPool, job: Job,
+                       timeout_seconds: int) -> dict:
     settings = get_settings()
     async with pool.acquire() as conn:
         signals = await _load_static_signals(conn, job.scan_id)
-    # Hard per-render cap: a wedged page (hung goto/evaluate) is cancelled so it
-    # can't hold a concurrency slot indefinitely. Cancellation propagates into
+    # Hard per-render cap (dynamic — set by the adaptive controller): a wedged page
+    # is cancelled so it can't hold a concurrency slot. Cancellation propagates into
     # RenderPool.page()'s `finally`, which closes the context and frees the slot.
     render_data = await asyncio.wait_for(
         render_page_sampled(
             render_pool, job.url, dwell_ms=settings.render_dwell_ms,
             samples=settings.render_samples,
             nav_timeout_ms=settings.render_nav_timeout_ms),
-        timeout=settings.render_timeout_seconds,
+        timeout=timeout_seconds,
     )
     signals["render"] = render_data
     if render_data.get("ok"):
@@ -86,10 +87,11 @@ async def _scan_render(pool: asyncpg.Pool, render_pool: RenderPool, job: Job) ->
     return assemble(signals)
 
 
-async def _process(pool: asyncpg.Pool, render_pool: RenderPool, job: Job) -> None:
+async def _process(pool: asyncpg.Pool, render_pool: RenderPool, job: Job,
+                   timeout_seconds: int) -> None:
     settings = get_settings()
     try:
-        result = await _scan_render(pool, render_pool, job)
+        result = await _scan_render(pool, render_pool, job, timeout_seconds)
 
         # Retry persist on transient deadlock/serialization so a successful (and
         # expensive ~10s) render is not thrown away and re-done.
@@ -116,6 +118,15 @@ async def _process(pool: asyncpg.Pool, render_pool: RenderPool, job: Job) -> Non
 
 
 async def _run_once(pool: asyncpg.Pool, render_pool: RenderPool, batch: int) -> int:
+    settings = get_settings()
+    # Read the adaptive control row: respect a halt, and use its dynamic timeout.
+    async with pool.acquire() as conn:
+        ctrl = await render_control.get_control(conn, settings)
+    if ctrl["halted"]:
+        log.warning("render HALTED by controller — not claiming: %s", ctrl.get("reason"))
+        return 0  # main loop will poll-sleep and re-check (auto-resumes when cleared)
+    timeout_seconds = ctrl["timeout_seconds"]
+
     async def _do_claim():
         async with pool.acquire() as conn:
             return await queue.claim(conn, tier="render", batch=batch)
@@ -123,7 +134,7 @@ async def _run_once(pool: asyncpg.Pool, render_pool: RenderPool, batch: int) -> 
     jobs = await with_retry(_do_claim)
     # Launch all claimed renders concurrently; RenderPool's semaphore caps how
     # many browser contexts actually run at once (AI_RENDER_CONCURRENCY).
-    await asyncio.gather(*(_process(pool, render_pool, j) for j in jobs))
+    await asyncio.gather(*(_process(pool, render_pool, j, timeout_seconds) for j in jobs))
     return len(jobs)
 
 
@@ -133,7 +144,8 @@ async def main() -> None:
     pool = await init_pool(apply_schema=False)  # schema owned by the app; avoid DDL deadlocks
     blocked = {t.strip() for t in settings.render_block_resources.split(",") if t.strip()}
     render_pool = RenderPool(concurrency=settings.render_concurrency, blocked_types=blocked,
-                             browsers=settings.render_browsers)
+                             browsers=settings.render_browsers,
+                             ssrf_intercept=settings.render_ssrf_intercept)
     await render_pool.start()
 
     loop = asyncio.get_running_loop()

@@ -26,11 +26,14 @@ from app.ssrf import literal_host_blocked
 _VIEWPORT = {"width": 1366, "height": 768}
 
 
-def _make_route_handler(blocked_types: set[str]):
+def _make_route_handler(blocked_types: set[str], ssrf_intercept: bool):
     async def _route_handler(route) -> None:
         # SSRF: block any subresource/redirect to a literal private/metadata host
-        # (cheap, no DNS). Then drop configured heavy resource types.
-        if literal_host_blocked(urlsplit(route.request.url).hostname):
+        # (cheap, no DNS) — only when in-app SSRF interception is enabled. Then drop
+        # configured heavy resource types. Note: intercepting + continuing every
+        # request is the dominant render cost on request-heavy pages, so this route
+        # is only installed when there's something to do (see RenderPool.page).
+        if ssrf_intercept and literal_host_blocked(urlsplit(route.request.url).hostname):
             await route.abort()
         elif route.request.resource_type in blocked_types:
             await route.abort()
@@ -50,14 +53,20 @@ def _least_loaded(inflight: list[int]) -> int:
 
 class RenderPool:
     def __init__(self, concurrency: int = 2, blocked_types: set[str] | None = None,
-                 browsers: int = 1) -> None:
+                 browsers: int = 1, ssrf_intercept: bool = True) -> None:
         self._concurrency = max(1, concurrency)
         self._n_browsers = max(1, browsers)
         # Default blocks fonts/media only — images are kept so page-weight stays
         # accurate (a headline metric). Pass {'image','font','media'} to trade
         # accuracy for lower bandwidth.
         self._blocked = blocked_types if blocked_types is not None else {"font", "media"}
-        self._route = _make_route_handler(self._blocked)
+        self._ssrf_intercept = ssrf_intercept
+        self._route = _make_route_handler(self._blocked, ssrf_intercept)
+        # Only intercept requests if there's actually something to do — otherwise
+        # skip context.route entirely to avoid a CDP round-trip per request (the
+        # dominant cost on 1000+ request pages). Egress-hardened deploys can run
+        # with ssrf_intercept=false + no blocked types for a big render speedup.
+        self._needs_route = ssrf_intercept or bool(self._blocked)
         self._pw: Playwright | None = None
         self._browsers: list[Browser] = []
         self._inflight: list[int] = []      # per-browser active-context counts
@@ -104,7 +113,8 @@ class RenderPool:
                 java_script_enabled=True,
             )
             try:
-                await context.route("**/*", self._route)
+                if self._needs_route:
+                    await context.route("**/*", self._route)
                 page = await context.new_page()
                 await page.add_init_script(INIT_JS)
                 yield page

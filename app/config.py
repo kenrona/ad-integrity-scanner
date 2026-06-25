@@ -79,6 +79,22 @@ class Settings(BaseSettings):
     # Resource types aborted during render. Default keeps images (accurate page
     # weight); add 'image' to cut bandwidth at the cost of weight accuracy.
     render_block_resources: str = "font,media"
+    # Per-request SSRF interception during render. Intercepting EVERY request to
+    # SSRF-check the host is the dominant cost on request-heavy pages (1000s of
+    # requests). In a network-egress-hardened deployment (private subnet, NACL
+    # blocking RFC1918 + metadata, IMDSv2-only) set false to skip per-request
+    # interception entirely — the big render speedup. Keep true on open networks.
+    render_ssrf_intercept: bool = True
+
+    # Adaptive render-timeout controller (maintenance worker adjusts render_control;
+    # render workers read it). If the recent render error rate exceeds the threshold,
+    # the per-render timeout escalates by step up to the cap. If still over threshold
+    # at the cap, the fleet HALTS (stop claiming) for manual diagnosis.
+    render_error_rate_threshold: float = 0.05
+    render_timeout_max_seconds: int = 300        # escalation ceiling (5 min)
+    render_timeout_step_seconds: int = 60        # escalation increment
+    render_control_window_seconds: int = 600     # error-rate measurement window
+    render_control_min_sample: int = 25          # min terminal renders before acting
     render_worker_batch: int = 8  # >= render_concurrency so a poll can fill the pool
 
     # Maintenance worker (Phase 4 hardening).

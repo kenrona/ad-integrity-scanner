@@ -279,3 +279,27 @@ GROUP BY dataset_id, dataset_name, dataset_kind, metric;
 -- Unique index required for REFRESH MATERIALIZED VIEW CONCURRENTLY.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_benchmark_metric_stats
     ON benchmark_metric_stats (dataset_id, metric);
+
+-- ===========================================================================
+-- Adaptive render control: terminal timestamp (for recent error-rate windows)
+-- + a single-row control record the fleet reads (dynamic timeout + halt flag).
+-- ===========================================================================
+ALTER TABLE scan_queue ADD COLUMN IF NOT EXISTS terminated_at TIMESTAMPTZ;
+
+-- Recent error-rate window query: terminal render rows by termination time.
+CREATE INDEX IF NOT EXISTS idx_scan_queue_terminated
+    ON scan_queue (tier, terminated_at)
+    WHERE status IN ('done', 'error');
+
+-- render_control: one row (id=1). The maintenance controller adjusts it; render
+-- workers read it each poll. timeout_seconds escalates on high error rate up to a
+-- cap; halted=true tells workers to stop claiming (auto-stop for diagnosis).
+CREATE TABLE IF NOT EXISTS render_control (
+    id              INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    timeout_seconds INT         NOT NULL,
+    halted          BOOLEAN     NOT NULL DEFAULT false,
+    reason          TEXT,
+    error_rate      REAL,
+    window_terminal INT,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
