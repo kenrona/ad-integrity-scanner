@@ -76,11 +76,25 @@ async def init_pool(*, apply_schema: bool = True) -> asyncpg.Pool:
     if _pool is not None:
         return _pool
     settings = get_settings()
-    _pool = await asyncpg.create_pool(
-        dsn=settings.database_url,
-        min_size=settings.db_pool_min,
-        max_size=settings.db_pool_max,
-    )
+    # Retry pool creation: a large fleet cold-starting can momentarily outrun
+    # Aurora Serverless v2's scale-up (connection limit grows with ACU), and a
+    # stopped/resuming cluster refuses connections briefly. Ride it out instead of
+    # crash-looping the worker.
+    connect_errors = (OSError, asyncpg.CannotConnectNowError,
+                      asyncpg.TooManyConnectionsError, asyncpg.PostgresConnectionError)
+    attempts = 12
+    for i in range(attempts):
+        try:
+            _pool = await asyncpg.create_pool(
+                dsn=settings.database_url,
+                min_size=settings.db_pool_min,
+                max_size=settings.db_pool_max,
+            )
+            break
+        except connect_errors:
+            if i == attempts - 1:
+                raise
+            await asyncio.sleep(min(5.0, 0.5 * (2 ** i)))
     if apply_schema:
         schema_sql = _SCHEMA_PATH.read_text(encoding="utf-8")
         async with _pool.acquire() as conn:
