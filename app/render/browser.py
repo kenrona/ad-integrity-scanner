@@ -106,20 +106,24 @@ class RenderPool:
         async with self._sem:
             idx = _least_loaded(self._inflight)
             self._inflight[idx] += 1
-            browser = self._browsers[idx]
-            context = await browser.new_context(
-                user_agent=get_settings().user_agent,
-                viewport=_VIEWPORT,
-                java_script_enabled=True,
-            )
+            # Outer try guarantees the inflight decrement even if new_context()
+            # raises or is cancelled (e.g. the render-timeout wait_for fires while
+            # the context is being created) — otherwise the per-browser count
+            # drifts up forever and _least_loaded stops balancing.
             try:
-                if self._needs_route:
-                    await context.route("**/*", self._route)
-                page = await context.new_page()
-                await page.add_init_script(INIT_JS)
-                yield page
-            finally:
+                browser = self._browsers[idx]
+                context = await browser.new_context(
+                    user_agent=get_settings().user_agent,
+                    viewport=_VIEWPORT,
+                    java_script_enabled=True,
+                )
                 try:
-                    await context.close()
+                    if self._needs_route:
+                        await context.route("**/*", self._route)
+                    page = await context.new_page()
+                    await page.add_init_script(INIT_JS)
+                    yield page
                 finally:
-                    self._inflight[idx] -= 1
+                    await context.close()
+            finally:
+                self._inflight[idx] -= 1

@@ -17,7 +17,7 @@ import asyncpg
 
 from app import queue, render_control, results
 from app.config import get_settings
-from app.db import close_pool, init_pool, with_retry
+from app.db import close_pool, init_pool, require_schema, with_retry
 from app.logging_config import configure_logging, get_logger, kv
 from app.queue import Job
 from app.render.browser import RenderPool
@@ -142,6 +142,7 @@ async def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
     pool = await init_pool(apply_schema=False)  # schema owned by the app; avoid DDL deadlocks
+    await require_schema(pool, ["scan_queue", "scan_results", "render_control"])
     blocked = {t.strip() for t in settings.render_block_resources.split(",") if t.strip()}
     render_pool = RenderPool(concurrency=settings.render_concurrency, blocked_types=blocked,
                              browsers=settings.render_browsers,

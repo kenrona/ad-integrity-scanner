@@ -45,18 +45,34 @@ async def _update(conn: asyncpg.Connection, *, timeout: int, halted: bool,
 
 
 async def _recent_render_rate(conn: asyncpg.Connection, window_seconds: int) -> tuple[int, int]:
-    """(terminal, errors) for render jobs that finished within the window."""
+    """(terminal, errors) for recent render work.
+
+    errors  = render rows that FAILED an attempt recently and are not yet done
+              (parked 'error' or mid-retry 'queued'/'processing' with a recent
+              last_error_at) — so ongoing timeout churn counts immediately rather
+              than lagging by max_attempts.
+    success = render rows that finished 'done' within the window.
+    terminal = errors + success (the denominator).
+    """
     row = await conn.fetchrow(
         """
-        SELECT count(*) AS terminal,
-               count(*) FILTER (WHERE status = 'error') AS errors
+        SELECT
+            count(*) FILTER (
+                WHERE status <> 'done'
+                  AND last_error_at > now() - make_interval(secs => $1)
+            ) AS errors,
+            count(*) FILTER (
+                WHERE status = 'done'
+                  AND terminated_at > now() - make_interval(secs => $1)
+            ) AS success
         FROM scan_queue
-        WHERE tier = 'render' AND status IN ('done', 'error')
-          AND terminated_at > now() - make_interval(secs => $1)
+        WHERE tier = 'render'
         """,
         window_seconds,
     )
-    return row["terminal"] or 0, row["errors"] or 0
+    errors = row["errors"] or 0
+    success = row["success"] or 0
+    return errors + success, errors
 
 
 async def evaluate(conn: asyncpg.Connection, settings: Settings) -> dict:
@@ -98,8 +114,9 @@ async def evaluate(conn: asyncpg.Connection, settings: Settings) -> dict:
                         f"raised timeout {cur}->{new_timeout}s"),
                 error_rate=rate, window_terminal=terminal)
     else:
+        rate_str = f"{rate:.1%}" if rate is not None else "n/a"
         await _update(conn, timeout=cur, halted=False,
-                      reason=f"render error rate {rate:.1%} ok ({errors}/{terminal})",
+                      reason=f"render error rate {rate_str} ok ({errors}/{terminal})",
                       error_rate=rate, window_terminal=terminal)
     return await get_control(conn, settings)
 

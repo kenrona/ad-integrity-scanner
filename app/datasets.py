@@ -206,9 +206,12 @@ def parse_xlsx(data: bytes, *, url_column: str | None = None) -> ParsedSource:
         except StopIteration:
             raise ValueError("xlsx worksheet is empty")
         headers = [("" if h is None else str(h)) for h in header_row]
-        url_header, others = _resolve_url_column(headers, url_column)
+        url_header, _others = _resolve_url_column(headers, url_column)
         url_idx = headers.index(url_header)
-        other_idx = {h: headers.index(h) for h in others}
+        # Map non-url columns BY POSITION (enumerate), not by headers.index(name):
+        # the latter collapses duplicate header names to the first occurrence, so a
+        # second same-named column would be read from the wrong cell for every row.
+        other_positions = [(i, h) for i, h in enumerate(headers) if i != url_idx]
 
         urls: list[str] = []
         extras: list[dict] = []
@@ -219,7 +222,7 @@ def parse_xlsx(data: bytes, *, url_column: str | None = None) -> ParsedSource:
                 continue
             urls.append(raw)
             extra: dict = {}
-            for h, idx in other_idx.items():
+            for idx, h in other_positions:
                 v = row[idx] if idx < len(row) else None
                 extra[h] = None if v is None else (v if isinstance(v, (int, float, bool)) else str(v))
             extras.append(extra)
@@ -405,31 +408,32 @@ async def ingest(pool: asyncpg.Pool, *, dataset_id: int, parsed: ParsedSource,
             nonlocal inserted, duplicates, batch, processed_in_batch
             if not batch:
                 return
+            # INSERT ... SELECT unnest(...) ... RETURNING counts exactly THIS batch's
+            # inserts in one round-trip — no whole-table COUNT(*) (which was O(n^2)
+            # over the growing dataset and wrong under concurrent same-dataset ingest).
+            cols = list(zip(*batch))  # transpose 14-tuples into 14 column arrays
             async with pool.acquire() as conn:
-                async with conn.transaction():
-                    before = await conn.fetchval(
-                        "SELECT count(*) FROM dataset_rows WHERE dataset_id = $1",
-                        dataset_id,
+                returned = await conn.fetch(
+                    """
+                    INSERT INTO dataset_rows (
+                        dataset_id, url, url_hash, domain, extra, source_domain,
+                        mon_prebid_count, mon_bid_count, mon_request_count,
+                        mon_impressions, mon_bid_rate, mon_revenue, mon_cpm,
+                        mon_cpm_variance
                     )
-                    await conn.executemany(
-                        """
-                        INSERT INTO dataset_rows (
-                            dataset_id, url, url_hash, domain, extra, source_domain,
-                            mon_prebid_count, mon_bid_count, mon_request_count,
-                            mon_impressions, mon_bid_rate, mon_revenue, mon_cpm,
-                            mon_cpm_variance
-                        )
-                        VALUES ($1, $2, $3, $4, $5::jsonb, $6,
-                                $7, $8, $9, $10, $11, $12, $13, $14)
-                        ON CONFLICT (dataset_id, url_hash) DO NOTHING
-                        """,
-                        batch,
+                    SELECT * FROM unnest(
+                        $1::bigint[], $2::text[], $3::text[], $4::text[],
+                        $5::jsonb[], $6::text[],
+                        $7::bigint[], $8::bigint[], $9::bigint[], $10::bigint[],
+                        $11::double precision[], $12::double precision[],
+                        $13::double precision[], $14::double precision[]
                     )
-                    after = await conn.fetchval(
-                        "SELECT count(*) FROM dataset_rows WHERE dataset_id = $1",
-                        dataset_id,
-                    )
-                ins = int(after - before)
+                    ON CONFLICT (dataset_id, url_hash) DO NOTHING
+                    RETURNING 1
+                    """,
+                    *cols,
+                )
+                ins = len(returned)
                 inserted += ins
                 duplicates += len(batch) - ins
                 await progress.advance(
@@ -644,7 +648,11 @@ async def scan_dataset(pool: asyncpg.Pool, *, dataset_id: int, job_id: int,
     settings = get_settings()
     concurrency = max(1, settings.scan_batch_concurrency)
     counts = {"queued": 0, "fresh": 0, "inflight": 0, "error": 0}
-    sample_rate = min(1.0, max(0.0, sample_rate))
+    # Reject <=0 explicitly: a 0/negative rate would select zero rows and finish
+    # 'done' with an empty scan that looks successful. (The API model also enforces
+    # gt=0, but the CLI path calls here directly.)
+    if not 0 < sample_rate <= 1:
+        raise ValueError(f"sample_rate must be in (0, 1], got {sample_rate}")
 
     try:
         async with pool.acquire() as conn:

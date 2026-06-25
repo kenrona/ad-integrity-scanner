@@ -38,14 +38,25 @@ async def pool():
 
 
 async def _seed(conn, *, done: int, errors: int) -> None:
-    """Insert recent terminal render jobs: `done` succeeded, `errors` parked."""
-    for status, n in (("done", done), ("error", errors)):
-        for _ in range(n):
-            await conn.execute(
-                "INSERT INTO scan_queue (scan_id, url_hash, url, domain, tier, status, terminated_at) "
-                "VALUES ($1, $2, 'u', 'd', 'render', $3, now())",
-                uuid.uuid4(), uuid.uuid4().hex, status,
-            )
+    """Insert recent render jobs: `done` succeeded; `errors` failed an attempt.
+
+    'done' rows carry terminated_at; failed rows carry last_error_at (which is what
+    the controller's rate query counts), matching how queue.mark_done / mark_error /
+    requeue stamp real rows.
+    """
+    for _ in range(done):
+        await conn.execute(
+            "INSERT INTO scan_queue (scan_id, url_hash, url, domain, tier, status, terminated_at) "
+            "VALUES ($1, $2, 'u', 'd', 'render', 'done', now())",
+            uuid.uuid4(), uuid.uuid4().hex,
+        )
+    for _ in range(errors):
+        await conn.execute(
+            "INSERT INTO scan_queue (scan_id, url_hash, url, domain, tier, status, "
+            "terminated_at, last_error_at) "
+            "VALUES ($1, $2, 'u', 'd', 'render', 'error', now(), now())",
+            uuid.uuid4(), uuid.uuid4().hex,
+        )
 
 
 async def test_healthy_holds_timeout(pool):

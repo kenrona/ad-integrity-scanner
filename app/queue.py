@@ -95,7 +95,7 @@ async def requeue(conn: asyncpg.Connection, job_id: int, err: str) -> None:
     await conn.execute(
         """
         UPDATE scan_queue
-        SET status = 'queued', claimed_at = NULL, last_error = $2
+        SET status = 'queued', claimed_at = NULL, last_error = $2, last_error_at = now()
         WHERE id = $1
         """,
         job_id, err[:2000],
@@ -105,7 +105,8 @@ async def requeue(conn: asyncpg.Connection, job_id: int, err: str) -> None:
 async def mark_error(conn: asyncpg.Connection, job_id: int, err: str) -> None:
     """Park a job as permanently failed (attempts exhausted)."""
     await conn.execute(
-        "UPDATE scan_queue SET status = 'error', terminated_at = now(), last_error = $2 WHERE id = $1",
+        "UPDATE scan_queue SET status = 'error', terminated_at = now(), "
+        "last_error_at = now(), last_error = $2 WHERE id = $1",
         job_id, err[:2000],
     )
 
@@ -124,6 +125,7 @@ async def reap_stale(
             status = CASE WHEN attempts < $2 THEN 'queued' ELSE 'error' END,
             claimed_at = NULL,
             terminated_at = CASE WHEN attempts < $2 THEN NULL ELSE now() END,
+            last_error_at = now(),
             last_error = COALESCE(last_error, 'reaped: visibility timeout')
         WHERE status = 'processing'
           AND claimed_at < now() - make_interval(secs => $1)

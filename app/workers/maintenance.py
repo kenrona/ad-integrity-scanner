@@ -16,7 +16,7 @@ import asyncpg
 
 from app import ledger, queue, render_control, service
 from app.config import Settings, get_settings
-from app.db import close_pool, init_pool
+from app.db import close_pool, init_pool, require_schema
 from app.logging_config import configure_logging, get_logger, kv
 
 _stop = asyncio.Event()
@@ -55,6 +55,7 @@ async def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
     pool = await init_pool(apply_schema=False)  # schema owned by the app; avoid DDL deadlocks
+    await require_schema(pool, ["scan_queue", "render_control"])
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

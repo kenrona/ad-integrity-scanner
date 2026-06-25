@@ -303,3 +303,11 @@ CREATE TABLE IF NOT EXISTS render_control (
     window_terminal INT,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- last_error_at: stamped on EVERY failed attempt (requeue or park), so the
+-- controller's error rate reflects ongoing timeout churn immediately, not just
+-- jobs that exhausted all retries (which lag by max_attempts).
+ALTER TABLE scan_queue ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_scan_queue_last_error
+    ON scan_queue (tier, last_error_at)
+    WHERE last_error_at IS NOT NULL;

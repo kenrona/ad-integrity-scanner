@@ -19,6 +19,11 @@ _pool: asyncpg.Pool | None = None
 _TRANSIENT_ERRORS = (
     asyncpg.DeadlockDetectedError,
     asyncpg.SerializationError,
+    # Connection-level drops (server restart, idle/pool eviction, network blip):
+    # the next attempt acquires a fresh pooled connection, so these are retryable.
+    asyncpg.PostgresConnectionError,
+    asyncpg.ConnectionDoesNotExistError,
+    asyncpg.InterfaceError,
 )
 
 
@@ -29,6 +34,8 @@ async def with_retry(make_coro, *, attempts: int = 5, base_delay: float = 0.05):
     opens a new connection/transaction each time). Non-transient errors propagate
     immediately. Raises the last transient error if all attempts are exhausted.
     """
+    if attempts < 1:
+        raise ValueError("with_retry: attempts must be >= 1")
     for i in range(attempts):
         try:
             return await make_coro()
@@ -36,6 +43,24 @@ async def with_retry(make_coro, *, attempts: int = 5, base_delay: float = 0.05):
             if i == attempts - 1:
                 raise
             await asyncio.sleep(base_delay * (2 ** i))
+    raise RuntimeError("with_retry: unreachable")  # loop always returns or raises
+
+
+async def require_schema(pool: asyncpg.Pool, tables: list[str]) -> None:
+    """Fail fast (clear message) if expected tables are absent.
+
+    Workers run init_pool(apply_schema=False) and assume the schema exists. If a
+    worker attaches to an un-migrated DB (deploy race, fresh DB), this raises with
+    a clear instruction instead of letting every poll fail silently in the loop.
+    """
+    async with pool.acquire() as conn:
+        for t in tables:
+            exists = await conn.fetchval("SELECT to_regclass($1)", t)
+            if exists is None:
+                raise RuntimeError(
+                    f"required table '{t}' is missing — apply the schema first "
+                    f"(control.py init-db, or start the API/migration before workers)"
+                )
 
 
 async def init_pool(*, apply_schema: bool = True) -> asyncpg.Pool:
